@@ -15,6 +15,7 @@ import argparse
 from collections import deque
 from datetime import datetime
 import json
+import os
 import sys
 import threading
 import time
@@ -165,15 +166,18 @@ class ActionDispatcher:
             connected = self._try_connect()
             port = self.mouse.port if connected and self.mouse else None
             ver = self.mouse.version() if connected and self.mouse else None
-            info = detect_device_state(
-                connected_port=port,
-                firmware_version=ver,
-                expected_version=self.expected_version,
-            )
-            info["paused"] = self.paused
-            info["running"] = not self.paused
-            info["cursor"] = self._cursor_dict()
-            return info
+            paused = self.paused
+            expected = self.expected_version
+        # USB PnP 조회는 락 밖에서 실행 (다른 요청 블로킹 방지)
+        info = detect_device_state(
+            connected_port=port,
+            firmware_version=ver,
+            expected_version=expected,
+        )
+        info["paused"] = paused
+        info["running"] = not paused
+        info["cursor"] = self._cursor_dict()
+        return info
 
     def check_firmware(self, manifest_url: str | None = None) -> Dict[str, Any]:
         with self._lock:
@@ -520,8 +524,8 @@ def make_handler(dispatcher: ActionDispatcher, on_quit_request: Callable[[], Non
 
         def log_message(self, fmt: str, *args: Any) -> None:
             msg = fmt % args
-            # 폴링 요청(/status, /logs)은 로그 버퍼 도배 방지
-            if any(p in msg for p in ('"GET /status ', '"GET /logs ')):
+            # 폴링 요청(/status, /logs)과 CORS 프리플라이트(OPTIONS)는 로그 버퍼 도배 방지
+            if any(p in msg for p in ('"GET /status ', '"GET /logs ', '"OPTIONS ')):
                 return
             dispatcher.logger.add(f"HTTP {msg}")
 
@@ -552,7 +556,13 @@ def main() -> None:
         logger.add("VirtualMouse Agent 종료 중...")
         if tray_holder["tray"] is not None:
             tray_holder["tray"].stop()
+        try:
+            dispatcher.close()
+        except Exception:
+            pass
         threading.Thread(target=server.shutdown, daemon=True).start()
+        # Keep-alive 소켓이나 트레이 메시지 루프 지연으로 프로세스가 남지 않도록 안전 종료 보장
+        threading.Timer(0.6, lambda: os._exit(0)).start()
 
     server = ThreadingHTTPServer((args.host, args.port), make_handler(dispatcher, request_shutdown))
     port_info = dispatcher.mouse.port if dispatcher.mouse else "대기 중 (자동 감지)"

@@ -1,0 +1,93 @@
+name: Build & Publish Release Assets
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v1.1.1)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Determine tag and version
+        id: meta
+        shell: pwsh
+        run: |
+          $tag = if ("${{ github.event_name }}" -eq "workflow_dispatch") { "${{ inputs.tag }}" } else { "${{ github.ref_name }}" }
+          $ver = $tag.TrimStart("v")
+          echo "tag=$tag" >> $env:GITHUB_OUTPUT
+          echo "version=$ver" >> $env:GITHUB_OUTPUT
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        shell: pwsh
+        run: |
+          python -m venv .venv
+          .\.venv\Scripts\python.exe -m pip install --upgrade pip
+          .\.venv\Scripts\python.exe -m pip install -r host\requirements.txt -r host\requirements-dev.txt
+
+      - name: Install arduino-cli & cores/libraries
+        shell: pwsh
+        run: |
+          winget install --id ArduinoSA.CLI --exact --accept-source-agreements --accept-package-agreements
+          $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+          arduino-cli config init --overwrite
+          arduino-cli config add board_manager.additional_urls https://raw.githubusercontent.com/NicoHood/HoodLoader2/master/package_NicoHood_HoodLoader2_index.json
+          arduino-cli core update-index
+          arduino-cli core install arduino:avr
+          arduino-cli core install HoodLoader2:avr
+          arduino-cli lib install "HID-Project"
+
+      - name: Download dfu-programmer
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path tools | Out-Null
+          $zip = "tools\dfu-programmer-x64-1.1.0.zip"
+          Invoke-WebRequest -Uri "https://github.com/dfu-programmer/dfu-programmer/releases/download/v1.1.0/dfu-programmer-x64-1.1.0.zip" -OutFile $zip
+          Expand-Archive -Path $zip -DestinationPath "tools\dfu-programmer" -Force
+          Remove-Item $zip -Force
+
+      - name: Build firmware release artifacts (.hex + latest.json)
+        shell: pwsh
+        run: |
+          .\scripts\build_release.ps1 -Version "${{ steps.meta.outputs.version }}" -BaseUrl "https://github.com/${{ github.repository }}/releases/download/${{ steps.meta.outputs.tag }}"
+
+      - name: Build VirtualMouse-Agent.exe
+        shell: pwsh
+        run: |
+          .\scripts\build_agent.ps1
+
+      - name: Publish GitHub Release with assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
+        run: |
+          $tag = "${{ steps.meta.outputs.tag }}"
+          $ver = "${{ steps.meta.outputs.version }}"
+          $files = @(
+            "dist\VirtualMouse-Agent.exe",
+            "dist\releases\uno_16u2_mouse_$ver.hex",
+            "dist\releases\latest.json"
+          )
+          gh release view $tag --repo ${{ github.repository }} 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag @files --repo ${{ github.repository }} --clobber
+          } else {
+            gh release create $tag @files --repo ${{ github.repository }} --title "$tag - Virtual Mouse" --generate-notes
+          }

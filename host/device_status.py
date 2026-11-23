@@ -13,9 +13,14 @@ from __future__ import annotations
 
 import json
 import subprocess
+import time
 from typing import Any, Dict, Tuple
 
 EXPECTED_FW_VERSION = "1.1.0"
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+_USB_CACHE_TTL = 10.0
+_usb_cache_ts: float = 0.0
+_usb_cache_data: list[Dict[str, Any]] = []
 
 
 def parse_semver(ver: str | None) -> Tuple[int, ...]:
@@ -32,11 +37,13 @@ def parse_semver(ver: str | None) -> Tuple[int, ...]:
     return tuple(parts[:3])
 
 
-_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+def scan_usb_devices(force: bool = False) -> list[Dict[str, Any]]:
+    """Windows PnP 장치 목록에서 Arduino / Atmel DFU 관련 USB 장치를 조회합니다 (10초 캐시)."""
+    global _usb_cache_ts, _usb_cache_data
+    now = time.monotonic()
+    if not force and _usb_cache_data and (now - _usb_cache_ts) < _USB_CACHE_TTL:
+        return _usb_cache_data
 
-
-def scan_usb_devices() -> list[Dict[str, Any]]:
-    """Windows PnP 장치 목록에서 Arduino / Atmel DFU 관련 USB 장치를 조회합니다."""
     ps_cmd = (
         "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; "
         "Get-CimInstance Win32_PnPEntity | "
@@ -53,11 +60,14 @@ def scan_usb_devices() -> list[Dict[str, Any]]:
             timeout=5,
         ).strip()
         if not out:
-            return []
-        parsed = json.loads(out)
-        return parsed if isinstance(parsed, list) else [parsed]
+            _usb_cache_data = []
+        else:
+            parsed = json.loads(out)
+            _usb_cache_data = parsed if isinstance(parsed, list) else [parsed]
+        _usb_cache_ts = now
+        return _usb_cache_data
     except Exception:
-        return []
+        return _usb_cache_data
 
 
 def detect_device_state(
