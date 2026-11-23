@@ -66,7 +66,7 @@ jobs:
       - name: Build firmware release artifacts (.hex + latest.json)
         shell: pwsh
         run: |
-          .\scripts\build_release.ps1 -Version "${{ steps.meta.outputs.version }}" -BaseUrl "https://github.com/${{ github.repository }}/releases/download/${{ steps.meta.outputs.tag }}"
+          .\scripts\build_release.ps1 -BaseUrl "https://github.com/${{ github.repository }}/releases/download/${{ steps.meta.outputs.tag }}"
 
       - name: Build VirtualMouse-Agent.exe
         shell: pwsh
@@ -79,10 +79,11 @@ jobs:
         shell: pwsh
         run: |
           $tag = "${{ steps.meta.outputs.tag }}"
-          $ver = "${{ steps.meta.outputs.version }}"
+          # 펌웨어 버전은 앱 태그와 따로 관리한다 (build_release.ps1이 .ino의 FW_VERSION으로 매니페스트를 만든다)
+          $fwVer = (Get-Content -Raw "dist\releases\latest.json" | ConvertFrom-Json).firmware_version
           $files = @(
             "dist\VirtualMouse-Agent.exe",
-            "dist\releases\uno_16u2_mouse_$ver.hex",
+            "dist\releases\uno_16u2_mouse_$fwVer.hex",
             "dist\releases\latest.json"
           )
           gh release view $tag --repo ${{ github.repository }} 2>$null

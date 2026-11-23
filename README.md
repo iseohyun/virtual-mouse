@@ -103,11 +103,15 @@ VirtualMouse/
 
 외부 프로그램(Python, C#, Node.js, PowerShell, AutoHotkey, 웹페이지 등)은 `POST /action`에 **JSON(`{...}`)**만 전달하면 됩니다. 모든 이동·클릭·타이핑은 기본값(`"human": true`)으로 사람처럼 자연스럽게 실행됩니다.
 
+> **보안 규칙**: 다른 웹사이트가 이 PC의 마우스·키보드를 조작하지 못하도록, 브라우저에서는 `https://virtual-mouse.iseohyun.com`과 로컬 가이드(`http://127.0.0.1:18080`)만 호출할 수 있습니다.
+> POST는 `Content-Type: application/json`이어야 하고, 한 요청당 `sleep` 10초·`actions` 200개·`text` 2,000자·`scroll` ±100틱·`duration` 5초·본문 64KB까지 받습니다.
+> `{"action": "release_all"}`은 진행 중인 동작을 끊고 즉시 실행됩니다. 펌웨어 매니페스트 주소는 요청으로 바꿀 수 없습니다(환경 변수 `VMOUSE_MANIFEST_URL`만 사용).
+
 | 엔드포인트 / 액션 | 요청 예시 (`JSON`) | 설명 |
 | :--- | :--- | :--- |
 | `GET /health` | - | 아두이노 PING, 펌웨어 버전, 커서 좌표 |
 | `GET /status` | - | USB 상태 자동 판별 (`ready` / `outdated` / `dfu_ready` / `stock_uno` / `no_device`) |
-| `POST /firmware/check` | `{"manifest_url": "..."}` | 원격 `latest.json`과 현재 버전 비교 |
+| `POST /firmware/check` | `{}` | 원격 `latest.json`(최신 GitHub Release)과 현재 버전 비교 |
 | `POST /firmware/update` | `{"use_local": true}` 또는 `{}` | SHA-256 검증 후 소프트웨어 `BOOT` → DFU 자동 갱신 |
 | `POST /action` (상대 이동) | `{"action": "move", "dx": 150, "dy": -80}` | 베지어 곡선 + 가감속 + 미세 손떨림 |
 | `POST /action` (절대 이동) | `{"action": "move_to", "x": 800, "y": 500}` | DPI/가속 보정 포함 목표 픽셀 안착 |
@@ -124,6 +128,7 @@ VirtualMouse/
 
 ## 5. 원격 펌웨어 릴리즈 & 순정 복구
 
-* **원격 릴리즈 패키지 생성**: `.\scripts\build_release.ps1 -Version "1.1.0" -BaseUrl "https://virtual-mouse.iseohyun.com/releases"` → `dist\releases\uno_16u2_mouse_1.1.0.hex` + `latest.json` 생성
+* **원격 릴리즈 패키지 생성**: `.\scripts\build_release.ps1` → `dist\releases\uno_16u2_mouse_<FW_VERSION>.hex` + `latest.json` 생성
+  * 펌웨어 버전은 앱 릴리즈 태그와 따로 관리합니다. `.ino`의 `FW_VERSION`과 `host\device_status.py`의 `EXPECTED_FW_VERSION`이 같아야 빌드됩니다.
 * **Guide 없이 단독 업데이터 CLI 실행**: `.\.venv\Scripts\python.exe host\updater.py --check` / `--update`
 * **순정 Arduino Uno R3 원복**: DFU 모드 진입 후 `.\scripts\restore_stock_uno.ps1` 실행

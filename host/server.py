@@ -24,7 +24,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable, Dict
 
 from device_status import EXPECTED_FW_VERSION, detect_device_state
-from human_motion import HumanMouseController, enable_dpi_awareness, get_cursor_pos_safe
+from human_motion import ActionAborted, HumanMouseController, enable_dpi_awareness, get_cursor_pos_safe
 from keycodes import resolve_keycode
 from mouse_client import VirtualMouse
 from updater import (
@@ -36,6 +36,15 @@ from updater import (
     flash_hex_via_dfu,
     wait_for_dfu_ready,
 )
+
+
+# 한 요청이 에이전트를 오래 붙잡지 못하게 하는 상한
+MAX_SLEEP_MS = 10_000
+MAX_ACTIONS_PER_REQUEST = 200
+MAX_TYPE_CHARS = 2_000
+MAX_SCROLL_TICKS = 100
+MAX_MOVE_DURATION_SEC = 5.0
+EMERGENCY_ACTIONS = {"release_all", "key_release_all"}
 
 
 class LogBuffer:
@@ -82,6 +91,8 @@ class ActionDispatcher:
         self.human: HumanMouseController | None = None
         self.paused: bool = False
         self._lock = threading.Lock()
+        # 비상 정지: 진행 중인 동작 루프가 이 신호를 보고 중단한 뒤 잠금을 놓는다
+        self._abort = threading.Event()
         self._try_connect()
 
     def _try_connect(self) -> bool:
@@ -98,7 +109,7 @@ class ActionDispatcher:
             vm = VirtualMouse(port=self.preferred_port)
             if vm.ping():
                 self.mouse = vm
-                self.human = HumanMouseController(vm)
+                self.human = HumanMouseController(vm, abort_event=self._abort)
                 self.logger.add(f"Arduino 연결됨 ({vm.port})")
                 return True
             vm.close()
@@ -179,11 +190,11 @@ class ActionDispatcher:
         info["cursor"] = self._cursor_dict()
         return info
 
-    def check_firmware(self, manifest_url: str | None = None) -> Dict[str, Any]:
+    def check_firmware(self) -> Dict[str, Any]:
         with self._lock:
             connected = self._try_connect()
             ver = self.mouse.version() if connected and self.mouse else None
-            url = manifest_url or DEFAULT_MANIFEST_URL
+            url = DEFAULT_MANIFEST_URL
             info = check_for_update(ver, manifest_url=url)
             info["ok"] = True
             self.logger.add(f"펌웨어 버전 확인: current={ver}, remote={info['remote_version']}")
@@ -194,7 +205,9 @@ class ActionDispatcher:
             use_local = bool(payload.get("use_local", False))
             force = bool(payload.get("force", False))
             dry_run = bool(payload.get("dry_run", False))
-            manifest_url = payload.get("manifest_url") or DEFAULT_MANIFEST_URL
+            # 요청의 manifest_url은 무시한다: 공격자가 자기 매니페스트·해시로 임의 펌웨어를 심을 수 있기 때문.
+            # 다른 릴리즈 서버가 필요하면 에이전트 실행 환경의 VMOUSE_MANIFEST_URL로만 바꾼다.
+            manifest_url = DEFAULT_MANIFEST_URL
 
             connected = self._try_connect()
             current_ver = self.mouse.version() if connected and self.mouse else None
@@ -250,16 +263,40 @@ class ActionDispatcher:
             self.logger.add("펌웨어 플래싱 성공! USB 재연결 대기 중")
             return result
 
+    @staticmethod
+    def _is_emergency(payload: Dict[str, Any]) -> bool:
+        return str(payload.get("action", "")).strip().lower() in EMERGENCY_ACTIONS and "actions" not in payload
+
     def execute_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        if not isinstance(payload, dict):
+            raise ValueError("Request body must be a JSON object")
+        if self._is_emergency(payload):
+            # 진행 중인 긴 동작(타이핑·스크롤·대기)을 먼저 끊고, 잠금을 얻는 즉시 모든 입력을 해제한다
+            self._abort.set()
+            with self._lock:
+                self._abort.clear()
+                return {"ok": True, "result": self._execute_one(payload)}
+
         with self._lock:
+            self._abort.clear()
             if "actions" in payload:
                 actions = payload["actions"]
                 if not isinstance(actions, list):
                     raise ValueError("'actions' must be a list")
-                results = [self._execute_one(item) for item in actions]
+                if len(actions) > MAX_ACTIONS_PER_REQUEST:
+                    raise ValueError(f"'actions' may contain at most {MAX_ACTIONS_PER_REQUEST} items")
+                results = []
+                for item in actions:
+                    if self._abort.is_set():
+                        raise ActionAborted("비상 정지 요청으로 남은 동작을 취소했습니다.")
+                    results.append(self._execute_one(item))
                 return {"ok": True, "results": results}
             result = self._execute_one(payload)
             return {"ok": True, "result": result}
+
+    def _interruptible_sleep(self, seconds: float) -> None:
+        if self._abort.wait(seconds):
+            raise ActionAborted("비상 정지 요청으로 대기를 중단했습니다.")
 
     def _execute_one(self, cmd: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(cmd, dict):
@@ -268,10 +305,16 @@ class ActionDispatcher:
         action = str(cmd.get("action", "")).strip().lower()
         human = bool(cmd.get("human", True))
         duration = cmd.get("duration")
+        if duration is not None:
+            duration = float(duration)
+            if not 0 < duration <= MAX_MOVE_DURATION_SEC:
+                raise ValueError(f"'duration' must be between 0 and {MAX_MOVE_DURATION_SEC} seconds")
 
         if action == "sleep":
-            ms = max(0, int(cmd.get("ms", 100)))
-            time.sleep(ms / 1000.0)
+            ms = int(cmd.get("ms", 100))
+            if not 0 <= ms <= MAX_SLEEP_MS:
+                raise ValueError(f"'ms' must be between 0 and {MAX_SLEEP_MS}")
+            self._interruptible_sleep(ms / 1000.0)
             return {"action": "sleep", "ms": ms}
 
         if action == "cursor":
@@ -337,6 +380,8 @@ class ActionDispatcher:
 
         if action == "scroll":
             delta = int(cmd.get("delta", 0))
+            if abs(delta) > MAX_SCROLL_TICKS:
+                raise ValueError(f"'delta' must be between -{MAX_SCROLL_TICKS} and {MAX_SCROLL_TICKS}")
             if human:
                 human_ctrl.scroll_human(delta)
             else:
@@ -346,6 +391,8 @@ class ActionDispatcher:
         # --- Keyboard actions ---
         if action == "type":
             text = str(cmd.get("text", ""))
+            if len(text) > MAX_TYPE_CHARS:
+                raise ValueError(f"'text' may contain at most {MAX_TYPE_CHARS} characters")
             if human:
                 human_ctrl.type_human(text)
             else:
@@ -397,26 +444,82 @@ class ActionDispatcher:
             self._disconnect_unlocked()
 
 
-def make_handler(dispatcher: ActionDispatcher, on_quit_request: Callable[[], None]):
+PUBLIC_DASHBOARD_ORIGIN = "https://virtual-mouse.iseohyun.com"
+MAX_BODY_BYTES = 64 * 1024
+
+
+def allowed_origins(port: int) -> set[str]:
+    """이 API를 브라우저에서 부를 수 있는 출처: 공식 대시보드와 이 서버가 직접 서빙하는 로컬 가이드."""
+    return {
+        PUBLIC_DASHBOARD_ORIGIN,
+        f"http://127.0.0.1:{port}",
+        f"http://localhost:{port}",
+    }
+
+
+def allowed_hosts(port: int) -> set[str]:
+    """DNS rebinding 방지: Host 헤더는 루프백 이름만 허용한다."""
+    return {f"127.0.0.1:{port}", f"localhost:{port}", f"[::1]:{port}"}
+
+
+def make_handler(dispatcher: ActionDispatcher, on_quit_request: Callable[[], None], port: int = 18080):
+    origins = allowed_origins(port)
+    hosts = allowed_hosts(port)
+
     class VirtualMouseHTTPHandler(BaseHTTPRequestHandler):
+        def _origin_allowed(self) -> bool:
+            origin = self.headers.get("Origin")
+            return origin is None or origin in origins
+
+        def _guard(self) -> bool:
+            """다른 사이트가 이 PC의 마우스·키보드를 조작하지 못하게 요청 출처를 검사한다.
+
+            - Host 헤더가 루프백이 아니면 거부 (DNS rebinding)
+            - Origin이 허용 목록 밖이면 거부 (외부 웹페이지의 fetch)
+            - Origin 없이 다른 사이트에서 온 요청(Sec-Fetch-Site: cross-site)도 거부
+            - POST는 application/json만 허용 (text/plain 단순 요청을 이용한 CSRF 차단)
+            Origin을 보내지 않는 외부 프로그램(Python, curl, AHK, vm CLI)은 그대로 쓸 수 있다.
+            """
+            host = (self.headers.get("Host") or "").strip().lower()
+            if host not in hosts:
+                self._send_json(421, {"ok": False, "error": "Host not allowed."}, cors=False)
+                return False
+            if not self._origin_allowed():
+                self._send_json(403, {"ok": False, "error": "Origin not allowed."}, cors=False)
+                return False
+            if self.headers.get("Origin") is None and self.headers.get("Sec-Fetch-Site") == "cross-site":
+                self._send_json(403, {"ok": False, "error": "Cross-site request not allowed."}, cors=False)
+                return False
+            if self.command == "POST":
+                ctype = (self.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+                if ctype != "application/json":
+                    self._send_json(415, {"ok": False, "error": "Content-Type must be application/json."})
+                    return False
+            return True
+
         def _send_cors_headers(self) -> None:
-            origin = self.headers.get("Origin") or "*"
+            origin = self.headers.get("Origin")
+            if origin is None or origin not in origins:
+                return
             self.send_header("Access-Control-Allow-Origin", origin)
             self.send_header("Vary", "Origin")
             self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
             self.send_header("Access-Control-Allow-Headers", "Content-Type")
             self.send_header("Access-Control-Allow-Private-Network", "true")
 
-        def _send_json(self, status: int, body: Dict[str, Any]) -> None:
+        def _send_json(self, status: int, body: Dict[str, Any], cors: bool = True) -> None:
             raw = json.dumps(body, ensure_ascii=False).encode("utf-8")
             self.send_response(status)
-            self._send_cors_headers()
+            if cors:
+                self._send_cors_headers()
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(raw)))
             self.end_headers()
             self.wfile.write(raw)
 
         def do_OPTIONS(self) -> None:
+            if not self._guard():
+                return
             self.send_response(204)
             self._send_cors_headers()
             self.send_header("Content-Length", "0")
@@ -447,6 +550,8 @@ def make_handler(dispatcher: ActionDispatcher, on_quit_request: Callable[[], Non
             return True
 
         def do_GET(self) -> None:
+            if not self._guard():
+                return
             path = self.path.split("?", 1)[0]
             if path == "/health":
                 try:
@@ -479,9 +584,14 @@ def make_handler(dispatcher: ActionDispatcher, on_quit_request: Callable[[], Non
             self._send_json(404, {"ok": False, "error": "Not found."})
 
         def do_POST(self) -> None:
+            if not self._guard():
+                return
             path = self.path.split("?", 1)[0]
             try:
                 length = int(self.headers.get("Content-Length", "0"))
+                if length < 0 or length > MAX_BODY_BYTES:
+                    self._send_json(413, {"ok": False, "error": f"Request body too large (max {MAX_BODY_BYTES} bytes)."})
+                    return
                 raw = self.rfile.read(length).decode("utf-8") if length > 0 else ""
                 payload = json.loads(raw) if raw.strip() else {}
 
@@ -490,7 +600,8 @@ def make_handler(dispatcher: ActionDispatcher, on_quit_request: Callable[[], Non
                     self._send_json(200, resp)
                     return
                 if path == "/firmware/check":
-                    resp = dispatcher.check_firmware(payload.get("manifest_url"))
+                    # 매니페스트 주소는 요청으로 바꿀 수 없다 (임의 펌웨어 플래싱 방지)
+                    resp = dispatcher.check_firmware()
                     self._send_json(200, resp)
                     return
                 if path == "/firmware/update":
@@ -515,6 +626,9 @@ def make_handler(dispatcher: ActionDispatcher, on_quit_request: Callable[[], Non
                     return
 
                 self._send_json(404, {"ok": False, "error": f"Unknown endpoint: {path}"})
+            except ActionAborted as exc:
+                dispatcher.logger.add(f"409 {path}: {exc}", "WARN")
+                self._send_json(409, {"ok": False, "aborted": True, "error": str(exc)})
             except (ValueError, KeyError, json.JSONDecodeError) as exc:
                 dispatcher.logger.add(f"400 {path}: {exc}", "ERROR")
                 self._send_json(400, {"ok": False, "error": str(exc)})
@@ -564,7 +678,7 @@ def main() -> None:
         # Keep-alive 소켓이나 트레이 메시지 루프 지연으로 프로세스가 남지 않도록 안전 종료 보장
         threading.Timer(0.6, lambda: os._exit(0)).start()
 
-    server = ThreadingHTTPServer((args.host, args.port), make_handler(dispatcher, request_shutdown))
+    server = ThreadingHTTPServer((args.host, args.port), make_handler(dispatcher, request_shutdown, args.port))
     port_info = dispatcher.mouse.port if dispatcher.mouse else "대기 중 (자동 감지)"
     logger.add(f"서버 시작: http://{args.host}:{args.port} (Arduino: {port_info})")
 

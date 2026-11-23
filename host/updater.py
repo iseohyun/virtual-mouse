@@ -27,9 +27,10 @@ from typing import Any, Dict
 from device_status import EXPECTED_FW_VERSION, detect_device_state, parse_semver
 from mouse_client import VirtualMouse
 
+# 릴리즈 워크플로(.github/workflows/release.yml)가 최신 GitHub Release에 latest.json을 올린다.
 DEFAULT_MANIFEST_URL = os.environ.get(
     "VMOUSE_MANIFEST_URL",
-    "https://virtual-mouse.iseohyun.com/releases/latest.json",
+    "https://github.com/iseohyun/virtual-mouse/releases/latest/download/latest.json",
 )
 
 

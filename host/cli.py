@@ -73,11 +73,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_logs.add_argument("--tail", type=int, default=30, help="최근 N줄 출력 (default: 30)")
     p_logs.add_argument("--clear", action="store_true", help="서버 로그 초기화")
 
-    p_check = sub.add_parser("check-update", help="원격 릴리즈 펌웨어 버전 확인")
-    p_check.add_argument("--manifest", default=None, help="커스텀 latest.json URL")
+    sub.add_parser("check-update", help="원격 릴리즈 펌웨어 버전 확인")
 
     p_upd = sub.add_parser("update", help="펌웨어 자동 갱신 실행")
-    p_upd.add_argument("--manifest", default=None, help="커스텀 latest.json URL")
     p_upd.add_argument("--local", action="store_true", help="로컬 번들 .hex 사용")
     p_upd.add_argument("--force", action="store_true", help="동일 버전이어도 강제 플래싱")
     p_upd.add_argument("--dry-run", action="store_true", help="다운로드 및 SHA-256 검증만 수행")
@@ -135,16 +133,13 @@ def main() -> None:
         for line in lines[-args.tail :]:
             print(line)
     elif cmd == "check-update":
-        body = {"manifest_url": args.manifest} if args.manifest else {}
-        _print_json(_request(api, "POST", "/firmware/check", body))
+        _print_json(_request(api, "POST", "/firmware/check", {}))
     elif cmd == "update":
         body: dict[str, Any] = {
             "use_local": args.local,
             "force": args.force,
             "dry_run": args.dry_run,
         }
-        if args.manifest:
-            body["manifest_url"] = args.manifest
         _print_json(_request(api, "POST", "/firmware/update", body, timeout=60.0))
     elif cmd == "move":
         _print_json(_request(api, "POST", "/action", {"action": "move", "dx": args.dx, "dy": args.dy, "human": not args.raw}))

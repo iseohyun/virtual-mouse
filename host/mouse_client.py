@@ -104,6 +104,10 @@ class VirtualMouse:
         self._send_ok(f"KT {int(keycode)}")
 
     def key_write_text(self, text: str) -> None:
+        # 펌웨어는 줄 단위로 명령을 읽는다. 줄바꿈이 섞이면 뒤 글자가 새 명령(예: BOOT)으로 실행되므로 막는다.
+        # 줄바꿈·탭은 human 모드(type_human)가 enter/tab 키로 바꿔 보낸다.
+        if not text.isascii() or any(ch < " " or ch == "\x7f" for ch in text):
+            raise ValueError("raw 타이핑은 제어 문자(줄바꿈 포함) 없는 ASCII만 보낼 수 있습니다. human 모드를 쓰세요.")
         # Firmware buffer is 48 bytes; send safely in chunks <= 32 chars
         for i in range(0, len(text), 32):
             chunk = text[i : i + 32]

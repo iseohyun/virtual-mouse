@@ -15,12 +15,17 @@ from __future__ import annotations
 import ctypes
 import math
 import random
+import threading
 import time
 from dataclasses import dataclass
 from typing import Iterable, Tuple
 
 from keycodes import resolve_keycode
 from mouse_client import VirtualMouse
+
+
+class ActionAborted(RuntimeError):
+    """비상 정지(release_all)로 진행 중이던 동작이 중단됨."""
 
 
 class _POINT(ctypes.Structure):
@@ -94,9 +99,20 @@ class HumanProfile:
 class HumanMouseController:
     """VirtualMouse 위에 사람과 유사한 움직임/클릭 물리 엔진을 씌운 컨트롤러."""
 
-    def __init__(self, mouse: VirtualMouse, profile: HumanProfile | None = None):
+    def __init__(
+        self,
+        mouse: VirtualMouse,
+        profile: HumanProfile | None = None,
+        abort_event: threading.Event | None = None,
+    ):
         self.mouse = mouse
         self.profile = profile or HumanProfile()
+        # 비상 정지 요청 시 긴 타이핑·스크롤·이동 루프를 중간에 끊기 위한 신호
+        self.abort_event = abort_event or threading.Event()
+
+    def _check_abort(self) -> None:
+        if self.abort_event.is_set():
+            raise ActionAborted("비상 정지 요청으로 동작을 중단했습니다.")
 
     def _compute_duration(self, dist: float, duration: float | None) -> float:
         if duration is not None and duration > 0:
@@ -139,6 +155,7 @@ class HumanMouseController:
         start_time = time.perf_counter()
 
         for i in range(1, steps + 1):
+            self._check_abort()
             progress = i / steps
             eased = _minimum_jerk(progress)
             bx, by = _cubic_bezier(p0, p1, p2, p3, eased)
@@ -204,6 +221,7 @@ class HumanMouseController:
 
         # Windows 포인터 가속/DPI 차이로 남은 오차를 자연스럽게 미세 보정 (최대 6회)
         for _ in range(6):
+            self._check_abort()
             cur_x, cur_y = get_cursor_pos()
             err_x = target_x - cur_x
             err_y = target_y - cur_y
@@ -277,6 +295,7 @@ class HumanMouseController:
         direction = 1 if remaining > 0 else -1
         remaining = abs(remaining)
         while remaining > 0:
+            self._check_abort()
             step = min(remaining, random.choice([1, 1, 2]))
             self.mouse.scroll(direction * step)
             remaining -= step
@@ -286,6 +305,7 @@ class HumanMouseController:
     def type_human(self, text: str) -> None:
         """ASCII 문자열을 한 글자씩 사람처럼 자연스러운 랜덤 간격으로 타이핑합니다."""
         for ch in text:
+            self._check_abort()
             if ch == "\n":
                 self.key_tap_human("enter")
                 time.sleep(random.uniform(0.07, 0.16))
