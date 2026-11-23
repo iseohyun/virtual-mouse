@@ -555,6 +555,11 @@
     });
   });
 
+  // Register minimal Service Worker for PWA address-bar install button
+  if ("serviceWorker" in navigator && location.protocol === "https:") {
+    navigator.serviceWorker.register("sw.js").catch(() => {});
+  }
+
   // Initial route from URL hash
   const initialHash = location.hash.replace("#", "");
   if (TAB_TITLES[initialHash]) {

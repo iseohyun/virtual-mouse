@@ -32,6 +32,9 @@ def parse_semver(ver: str | None) -> Tuple[int, ...]:
     return tuple(parts[:3])
 
 
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+
 def scan_usb_devices() -> list[Dict[str, Any]]:
     """Windows PnP 장치 목록에서 Arduino / Atmel DFU 관련 USB 장치를 조회합니다."""
     ps_cmd = (
@@ -42,10 +45,11 @@ def scan_usb_devices() -> list[Dict[str, Any]]:
     )
     try:
         out = subprocess.check_output(
-            ["powershell.exe", "-NoProfile", "-Command", ps_cmd],
+            ["powershell.exe", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps_cmd],
             stderr=subprocess.DEVNULL,
             encoding="utf-8",
             errors="replace",
+            creationflags=_NO_WINDOW,
             timeout=5,
         ).strip()
         if not out:

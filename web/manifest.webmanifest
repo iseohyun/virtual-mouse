@@ -1,0 +1,16 @@
+{
+  "id": "/",
+  "name": "Virtual Mouse — Hardware HID Dashboard",
+  "short_name": "Virtual Mouse",
+  "description": "Arduino Uno R3 물리 USB HID 마우스·키보드 설치 및 제어 대시보드",
+  "lang": "ko",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0b1120",
+  "theme_color": "#0b1120",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}

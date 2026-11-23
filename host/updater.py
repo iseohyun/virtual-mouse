@@ -132,6 +132,9 @@ def download_and_verify_firmware(
     return out_path
 
 
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+
 def wait_for_dfu_ready(timeout: float = 8.0) -> bool:
     dfu_exe = find_dfu_programmer()
     deadline = time.time() + timeout
@@ -140,6 +143,7 @@ def wait_for_dfu_ready(timeout: float = 8.0) -> bool:
             [str(dfu_exe), "atmega16u2", "get", "bootloader-version"],
             capture_output=True,
             text=True,
+            creationflags=_NO_WINDOW,
         )
         if res.returncode == 0:
             return True
@@ -159,7 +163,7 @@ def flash_hex_via_dfu(hex_path: Path) -> Dict[str, Any]:
     ]
     logs: Dict[str, str] = {}
     for name, cmd in steps:
-        res = subprocess.run(cmd, capture_output=True, text=True)
+        res = subprocess.run(cmd, capture_output=True, text=True, creationflags=_NO_WINDOW)
         logs[name] = (res.stdout + "\n" + res.stderr).strip()
         if res.returncode != 0:
             raise RuntimeError(f"DFU {name} failed (code {res.returncode}): {logs[name]}")

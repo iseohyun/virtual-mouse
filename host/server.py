@@ -428,7 +428,9 @@ def make_handler(dispatcher: ActionDispatcher, on_quit_request: Callable[[], Non
                 ".css": "text/css; charset=utf-8",
                 ".js": "application/javascript; charset=utf-8",
                 ".svg": "image/svg+xml",
+                ".png": "image/png",
                 ".json": "application/json; charset=utf-8",
+                ".webmanifest": "application/manifest+json; charset=utf-8",
             }
             content_type = mime_map.get(target.suffix.lower(), "application/octet-stream")
             raw = target.read_bytes()
@@ -463,7 +465,11 @@ def make_handler(dispatcher: ActionDispatcher, on_quit_request: Callable[[], Non
             if path.startswith("/guide/"):
                 if self._serve_static(path[len("/guide/") :]):
                     return
-            if path.lstrip("/") in ("styles.css", "app.js", "index.html", "icon.svg", "robots.txt", "sitemap.xml"):
+            if path.lstrip("/") in (
+                "styles.css", "app.js", "index.html", "icon.svg",
+                "icon-192.png", "icon-512.png", "manifest.webmanifest",
+                "sw.js", "robots.txt", "sitemap.xml",
+            ):
                 if self._serve_static(path.lstrip("/")):
                     return
             self._send_json(404, {"ok": False, "error": "Not found."})
