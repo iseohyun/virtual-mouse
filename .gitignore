@@ -1,0 +1,23 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# External downloaded tools & firmware binaries (reproducible via scripts/setup.ps1)
+tools/
+firmware_bins/
+
+# Build artifacts
+build/
+dist/
+out/
+*.hex
+*.elf
+*.bin
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
