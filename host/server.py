@@ -1,30 +1,26 @@
 """
-VirtualMouse Local HTTP JSON API Server (v2)
+VirtualMouse Local HTTP JSON API Server (v3 — System Tray & Runtime Control)
 
-외부 프로그램 및 웹 가이드(https://virtual-mouse.iseohyun.com)에서
-COM 포트나 사람 움직임 알고리즘을 신경 쓰지 않고 JSON({})만으로
-물리 USB 마우스 + 키보드를 제어할 수 있는 로컬 서버입니다.
-
-기본 주소: http://127.0.0.1:18080
-
-Endpoints:
-  GET     /health  -> 서버 및 아두이노 PING / 버전 / 커서 상태 확인
-  GET     /status  -> USB 장치 자동 판별 (ready / outdated / dfu_ready / stock_uno / no_device)
-  POST    /action  -> JSON 객체({}) 또는 배열({"actions": [...]})로 마우스/키보드 제어
-  OPTIONS /*       -> CORS 및 Chrome Private Network Access 프리플라이트 응답
+특징:
+  - 콘솔(CMD) 창 없이 Windows 시스템 트레이(검정 바탕 흰 글씨 'VM' 아이콘)로 상주
+  - 트레이 우클릭 메뉴: 대시보드 보기 / 종료하기
+  - 내부 로그 링 버퍼(GET /logs)로 CMD 창 없이 대시보드에서 실시간 로그 확인
+  - 구동 제어 API: POST /control/pause, POST /control/resume, POST /control/quit
+  - 기본 주소: http://127.0.0.1:18080
 """
 
 from __future__ import annotations
 
 import argparse
+from collections import deque
+from datetime import datetime
 import json
 import sys
 import threading
 import time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Callable, Dict
 
 from device_status import EXPECTED_FW_VERSION, detect_device_state
 from human_motion import HumanMouseController, enable_dpi_awareness, get_cursor_pos_safe
@@ -41,20 +37,55 @@ from updater import (
 )
 
 
-class ActionDispatcher:
-    """COM 포트에 대한 스레드 안전한 단일 접근, 자동 재연결, JSON 액션 실행기."""
+class LogBuffer:
+    """스레드 안전한 서버 로그 링 버퍼 (대시보드 로그 탭에 표시)."""
 
-    def __init__(self, port: str | None = None, expected_version: str = EXPECTED_FW_VERSION):
+    def __init__(self, maxlen: int = 250):
+        self._entries: deque[str] = deque(maxlen=maxlen)
+        self._lock = threading.Lock()
+
+    def add(self, message: str, level: str = "INFO") -> None:
+        ts = datetime.now().strftime("%H:%M:%S")
+        line = f"[{ts}] [{level}] {message}"
+        with self._lock:
+            self._entries.append(line)
+        if sys.stdout is not None:
+            try:
+                print(line, flush=True)
+            except Exception:
+                pass
+
+    def list_lines(self) -> list[str]:
+        with self._lock:
+            return list(self._entries)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._entries.clear()
+
+
+class ActionDispatcher:
+    """COM 포트에 대한 스레드 안전한 단일 접근, 자동 재연결, 일시 중지 및 JSON 액션 실행기."""
+
+    def __init__(
+        self,
+        port: str | None = None,
+        expected_version: str = EXPECTED_FW_VERSION,
+        logger: LogBuffer | None = None,
+    ):
         enable_dpi_awareness()
         self.preferred_port = port
         self.expected_version = expected_version
+        self.logger = logger or LogBuffer()
         self.mouse: VirtualMouse | None = None
         self.human: HumanMouseController | None = None
+        self.paused: bool = False
         self._lock = threading.Lock()
         self._try_connect()
 
     def _try_connect(self) -> bool:
-        """VirtualMouse COM 포트 연결을 시도합니다. 장치가 없어도 예외를 발생시키지 않습니다."""
+        if self.paused:
+            return False
         if self.mouse is not None:
             try:
                 if self.mouse.ping():
@@ -67,6 +98,7 @@ class ActionDispatcher:
             if vm.ping():
                 self.mouse = vm
                 self.human = HumanMouseController(vm)
+                self.logger.add(f"Arduino 연결됨 ({vm.port})")
                 return True
             vm.close()
         except Exception:
@@ -75,14 +107,37 @@ class ActionDispatcher:
 
     def _disconnect_unlocked(self) -> None:
         if self.mouse is not None:
+            port = self.mouse.port
             try:
                 self.mouse.close()
             except Exception:
                 pass
+            self.logger.add(f"Arduino 연결 해제됨 ({port})")
         self.mouse = None
         self.human = None
 
+    def pause(self) -> Dict[str, Any]:
+        with self._lock:
+            self.paused = True
+            if self.mouse is not None:
+                try:
+                    self.mouse.release_all()
+                except Exception:
+                    pass
+            self._disconnect_unlocked()
+            self.logger.add("로컬 제어 서비스 일시 중지됨", "WARN")
+            return {"ok": True, "paused": True, "running": False}
+
+    def resume(self) -> Dict[str, Any]:
+        with self._lock:
+            self.paused = False
+            connected = self._try_connect()
+            self.logger.add(f"로컬 제어 서비스 재개됨 (connected={connected})")
+            return {"ok": True, "paused": False, "running": True, "connected": connected}
+
     def _require_connected(self) -> tuple[VirtualMouse, HumanMouseController]:
+        if self.paused:
+            raise RuntimeError("서비스가 일시 중지 상태입니다. 대시보드 [구동/로그] 탭에서 시작해 주세요.")
         if not self._try_connect() or self.mouse is None or self.human is None:
             raise RuntimeError("VirtualMouse 장치가 연결되어 있지 않습니다. /status로 장치 상태를 확인하세요.")
         return self.mouse, self.human
@@ -98,6 +153,8 @@ class ActionDispatcher:
             ver = self.mouse.version() if connected and self.mouse else None
             return {
                 "ok": connected,
+                "paused": self.paused,
+                "running": not self.paused,
                 "port": self.mouse.port if connected and self.mouse else None,
                 "firmware_version": ver,
                 "cursor": self._cursor_dict(),
@@ -113,6 +170,8 @@ class ActionDispatcher:
                 firmware_version=ver,
                 expected_version=self.expected_version,
             )
+            info["paused"] = self.paused
+            info["running"] = not self.paused
             info["cursor"] = self._cursor_dict()
             return info
 
@@ -123,6 +182,7 @@ class ActionDispatcher:
             url = manifest_url or DEFAULT_MANIFEST_URL
             info = check_for_update(ver, manifest_url=url)
             info["ok"] = True
+            self.logger.add(f"펌웨어 버전 확인: current={ver}, remote={info['remote_version']}")
             return info
 
     def update_firmware(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -170,6 +230,7 @@ class ActionDispatcher:
                         "target_version": target_ver,
                     }
 
+            self.logger.add(f"펌웨어 플래싱 시작 (target={target_ver})")
             if connected and self.mouse is not None:
                 self.mouse.enter_bootloader()
                 self._disconnect_unlocked()
@@ -182,6 +243,7 @@ class ActionDispatcher:
             result = flash_hex_via_dfu(hex_path)
             result["updated"] = True
             result["target_version"] = target_ver
+            self.logger.add("펌웨어 플래싱 성공! USB 재연결 대기 중")
             return result
 
     def execute_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -203,7 +265,6 @@ class ActionDispatcher:
         human = bool(cmd.get("human", True))
         duration = cmd.get("duration")
 
-        # 장치 연결 없이도 처리 가능한 유틸 액션
         if action == "sleep":
             ms = max(0, int(cmd.get("ms", 100)))
             time.sleep(ms / 1000.0)
@@ -213,6 +274,7 @@ class ActionDispatcher:
             return {"action": "cursor", "cursor": self._cursor_dict()}
 
         mouse, human_ctrl = self._require_connected()
+        self.logger.add(f"ACTION: {json.dumps(cmd, ensure_ascii=False)}")
 
         # --- Mouse actions ---
         if action == "move":
@@ -331,7 +393,7 @@ class ActionDispatcher:
             self._disconnect_unlocked()
 
 
-def make_handler(dispatcher: ActionDispatcher):
+def make_handler(dispatcher: ActionDispatcher, on_quit_request: Callable[[], None]):
     class VirtualMouseHTTPHandler(BaseHTTPRequestHandler):
         def _send_cors_headers(self) -> None:
             origin = self.headers.get("Origin") or "*"
@@ -339,7 +401,6 @@ def make_handler(dispatcher: ActionDispatcher):
             self.send_header("Vary", "Origin")
             self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
             self.send_header("Access-Control-Allow-Headers", "Content-Type")
-            # Chrome Private Network Access (HTTPS -> http://127.0.0.1)
             self.send_header("Access-Control-Allow-Private-Network", "true")
 
         def _send_json(self, status: int, body: Dict[str, Any]) -> None:
@@ -393,6 +454,9 @@ def make_handler(dispatcher: ActionDispatcher):
                 except Exception as exc:
                     self._send_json(500, {"ok": False, "error": str(exc)})
                 return
+            if path == "/logs":
+                self._send_json(200, {"ok": True, "lines": dispatcher.logger.list_lines()})
+                return
             if path in ("/", "/guide", "/guide/"):
                 if self._serve_static("index.html"):
                     return
@@ -402,38 +466,58 @@ def make_handler(dispatcher: ActionDispatcher):
             if path.lstrip("/") in ("styles.css", "app.js", "index.html", "icon.svg", "robots.txt", "sitemap.xml"):
                 if self._serve_static(path.lstrip("/")):
                     return
-            self._send_json(404, {"ok": False, "error": "Not found. Use GET /guide, GET /health, GET /status, or POST /action"})
+            self._send_json(404, {"ok": False, "error": "Not found."})
 
         def do_POST(self) -> None:
+            path = self.path.split("?", 1)[0]
             try:
                 length = int(self.headers.get("Content-Length", "0"))
                 raw = self.rfile.read(length).decode("utf-8") if length > 0 else ""
                 payload = json.loads(raw) if raw.strip() else {}
 
-                if self.path in ("/", "/action"):
+                if path in ("/", "/action"):
                     resp = dispatcher.execute_payload(payload)
                     self._send_json(200, resp)
                     return
-                if self.path == "/firmware/check":
+                if path == "/firmware/check":
                     resp = dispatcher.check_firmware(payload.get("manifest_url"))
                     self._send_json(200, resp)
                     return
-                if self.path == "/firmware/update":
+                if path == "/firmware/update":
                     resp = dispatcher.update_firmware(payload)
                     self._send_json(200, resp)
                     return
+                if path == "/control/pause":
+                    self._send_json(200, dispatcher.pause())
+                    return
+                if path == "/control/resume":
+                    self._send_json(200, dispatcher.resume())
+                    return
+                if path == "/control/quit":
+                    dispatcher.logger.add("대시보드에서 종료 요청 수신", "WARN")
+                    self._send_json(200, {"ok": True, "quitting": True})
+                    threading.Timer(0.25, on_quit_request).start()
+                    return
+                if path == "/logs/clear":
+                    dispatcher.logger.clear()
+                    dispatcher.logger.add("로그를 초기화했습니다.")
+                    self._send_json(200, {"ok": True})
+                    return
 
-                self._send_json(
-                    404,
-                    {"ok": False, "error": "Not found. Use POST /action, /firmware/check, or /firmware/update"},
-                )
+                self._send_json(404, {"ok": False, "error": f"Unknown endpoint: {path}"})
             except (ValueError, KeyError, json.JSONDecodeError) as exc:
+                dispatcher.logger.add(f"400 {path}: {exc}", "ERROR")
                 self._send_json(400, {"ok": False, "error": str(exc)})
             except Exception as exc:
+                dispatcher.logger.add(f"500 {path}: {exc}", "ERROR")
                 self._send_json(500, {"ok": False, "error": str(exc)})
 
         def log_message(self, fmt: str, *args: Any) -> None:
-            print(f"[VirtualMouseAPI] {self.address_string()} - {fmt % args}", flush=True)
+            msg = fmt % args
+            # 폴링 요청(/status, /logs)은 로그 버퍼 도배 방지
+            if any(p in msg for p in ('"GET /status ', '"GET /logs ')):
+                return
+            dispatcher.logger.add(f"HTTP {msg}")
 
     return VirtualMouseHTTPHandler
 
@@ -443,28 +527,57 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
     parser.add_argument("--port", type=int, default=18080, help="Bind port (default: 18080)")
     parser.add_argument("--com", default=None, help="Arduino COM port (auto-detect if omitted)")
-    parser.add_argument("--open-guide", action="store_true", help="Open guide page in browser on startup")
-    parser.add_argument("--no-browser", action="store_true", help="Do not open browser even in frozen .exe mode")
+    parser.add_argument("--open-guide", action="store_true", help="Open dashboard in browser on startup")
+    parser.add_argument("--no-browser", action="store_true", help="Do not open browser on startup")
+    parser.add_argument("--no-tray", action="store_true", help="Run without system tray icon (headless/CLI mode)")
     args = parser.parse_args()
 
-    dispatcher = ActionDispatcher(port=args.com)
-    server = ThreadingHTTPServer((args.host, args.port), make_handler(dispatcher))
-    port_info = dispatcher.mouse.port if dispatcher.mouse else "Not connected yet (auto-detect enabled)"
+    logger = LogBuffer()
+    dispatcher = ActionDispatcher(port=args.com, logger=logger)
     guide_url = f"http://{args.host}:{args.port}/guide"
-    print(f"VirtualMouse Local API Server running at http://{args.host}:{args.port} (Arduino: {port_info})", flush=True)
-    print(f"Guide UI: {guide_url}", flush=True)
 
-    should_open = (args.open_guide or getattr(sys, "frozen", False)) and not args.no_browser
+    tray_holder: dict[str, Any] = {"tray": None}
+    shutdown_event = threading.Event()
+
+    def request_shutdown() -> None:
+        if shutdown_event.is_set():
+            return
+        shutdown_event.set()
+        logger.add("VirtualMouse Agent 종료 중...")
+        if tray_holder["tray"] is not None:
+            tray_holder["tray"].stop()
+        threading.Thread(target=server.shutdown, daemon=True).start()
+
+    server = ThreadingHTTPServer((args.host, args.port), make_handler(dispatcher, request_shutdown))
+    port_info = dispatcher.mouse.port if dispatcher.mouse else "대기 중 (자동 감지)"
+    logger.add(f"서버 시작: http://{args.host}:{args.port} (Arduino: {port_info})")
+
+    should_open = args.open_guide and not args.no_browser
     if should_open:
-        threading.Timer(0.8, lambda: webbrowser.open(guide_url)).start()
+        threading.Timer(0.6, lambda: webbrowser.open(guide_url)).start()
 
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        print("\nShutting down server...", flush=True)
-    finally:
-        server.server_close()
-        dispatcher.close()
+    use_tray = not args.no_tray
+    if use_tray:
+        try:
+            from tray import TrayController
+
+            server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+            server_thread.start()
+            tray = TrayController(dashboard_url=guide_url, on_quit=request_shutdown)
+            tray_holder["tray"] = tray
+            tray.run()
+        except Exception as exc:
+            logger.add(f"트레이 초기화 실패, 콘솔 모드로 전환: {exc}", "WARN")
+            use_tray = False
+
+    if not use_tray:
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            pass
+
+    server.server_close()
+    dispatcher.close()
 
 
 if __name__ == "__main__":

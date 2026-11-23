@@ -3,160 +3,331 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Virtual Mouse - Arduino USB HID 마우스 &amp; 키보드 가이드 | iseohyun</title>
-  <meta name="description" content="Arduino Uno R3 기반 물리 USB HID 마우스·키보드 세팅 가이드, 로컬 JSON API 서버, 사람 움직임 엔진 라이브 클릭 테스트." />
+  <title>Virtual Mouse - Arduino USB HID 마우스 &amp; 키보드 대시보드 | iseohyun</title>
+  <meta name="description" content="Arduino Uno R3 기반 물리 USB HID 마우스·키보드 설치 가이드, 라이브 테스트, 구동/로그 제어, 외부 JSON API 안내 대시보드." />
   <link rel="canonical" href="https://virtual-mouse.iseohyun.com/" />
   <link rel="icon" href="icon.svg" type="image/svg+xml" />
   <meta name="theme-color" content="#0b1120" />
 
-  <!-- Open Graph -->
   <meta property="og:type" content="website" />
   <meta property="og:url" content="https://virtual-mouse.iseohyun.com/" />
   <meta property="og:title" content="Virtual Mouse — Arduino USB HID Mouse &amp; Keyboard" />
-  <meta property="og:description" content="Arduino Uno R3 물리 USB HID 마우스·키보드 올인원 세팅 및 라이브 자동 클릭 테스트" />
+  <meta property="og:description" content="Arduino Uno R3 물리 USB HID 마우스·키보드 대시보드 및 로컬 JSON API" />
   <meta property="og:locale" content="ko_KR" />
   <meta name="twitter:card" content="summary" />
 
-  <link rel="stylesheet" href="styles.css?v=20261124v2" />
+  <link rel="stylesheet" href="styles.css?v=20261124v3" />
 </head>
 <body>
-  <div class="container">
-    <header class="hero">
-      <div class="badge-row">
-        <span class="pill brand">Virtual Mouse Guide</span>
-        <span id="agentBadge" class="pill offline">로컬 서버 확인 중...</span>
-        <span id="fwBadge" class="pill muted">펌웨어: -</span>
+  <div class="app-shell">
+    <!-- Left Sidebar Drawer -->
+    <aside id="sidebar" class="sidebar">
+      <div class="sidebar-brand">
+        <span class="vm-logo">VM</span>
+        <div>
+          <div class="brand-title">Virtual Mouse</div>
+          <div class="brand-sub">Hardware HID Agent</div>
+        </div>
       </div>
-      <h1>하드웨어 USB 마우스 &amp; 키보드 올인원 세팅</h1>
-      <p class="subtitle">
-        Arduino Uno R3를 물리 USB HID 장치로 설정하고, 로컬 API(<code>127.0.0.1:18080</code>)를 통해
-        사람처럼 자연스럽게 동작하는지 바로 테스트합니다.
-      </p>
-    </header>
 
-    <main class="steps-grid">
-      <!-- Step 1 -->
-      <section id="step1Card" class="card">
-        <div class="card-header">
-          <span class="step-num">1단계</span>
-          <h2>DFU 모드 진입 &amp; 펌웨어 설치</h2>
-          <span id="step1Status" class="status-tag">대기</span>
-        </div>
-        <p id="step1Desc" class="desc">
-          순정 Arduino Uno R3인 경우, USB 포트 바로 옆 6핀 헤더 중 <strong>가장 가까운 2개 핀(RESET-GND)</strong>을
-          점퍼선으로 1초간 접촉했다 떼어 주세요.
-        </p>
+      <nav class="nav-list" aria-label="대시보드 메뉴">
+        <button class="nav-item active" data-tab="install" type="button">
+          <span class="nav-icon">①</span>
+          <span>설치하기</span>
+        </button>
+        <button class="nav-item" data-tab="test" type="button">
+          <span class="nav-icon">②</span>
+          <span>테스트</span>
+        </button>
+        <button class="nav-item" data-tab="logs" type="button">
+          <span class="nav-icon">③</span>
+          <span>로그 · 구동</span>
+        </button>
+        <button class="nav-item" data-tab="guide" type="button">
+          <span class="nav-icon">④</span>
+          <span>안내 (API)</span>
+        </button>
+      </nav>
 
-        <div class="diagram-box" id="jumperDiagram">
-          <svg viewBox="0 0 360 150" class="board-svg" aria-label="Arduino Uno R3 16U2 ICSP 2-pin diagram">
-            <rect x="20" y="15" width="320" height="120" rx="10" fill="#0d4a6b" stroke="#38bdf8" stroke-width="2" />
-            <rect x="6" y="34" width="54" height="44" rx="4" fill="#cbd5e1" stroke="#64748b" stroke-width="2" />
-            <text x="33" y="60" text-anchor="middle" font-size="11" font-weight="700" fill="#0f172a">USB</text>
-            <rect x="82" y="42" width="32" height="32" rx="3" fill="#1e293b" stroke="#94a3b8" stroke-width="1.5" />
-            <text x="98" y="61" text-anchor="middle" font-size="7.5" fill="#e2e8f0">16U2</text>
-            <rect x="132" y="32" width="56" height="54" rx="5" fill="#0f172a" stroke="#475569" stroke-width="1.5" />
-            <circle cx="146" cy="46" r="5" fill="#facc15" stroke="#fef08a" stroke-width="1.5" />
-            <circle cx="146" cy="70" r="5" fill="#facc15" stroke="#fef08a" stroke-width="1.5" />
-            <circle cx="160" cy="46" r="4" fill="#94a3b8" />
-            <circle cx="160" cy="70" r="4" fill="#94a3b8" />
-            <circle cx="174" cy="46" r="4" fill="#94a3b8" />
-            <circle cx="174" cy="70" r="4" fill="#94a3b8" />
-            <path d="M 146 46 C 126 46, 126 70, 146 70" fill="none" stroke="#ef4444" stroke-width="3.5" stroke-linecap="round" />
-            <line x1="146" y1="40" x2="215" y2="30" stroke="#facc15" stroke-width="1.2" stroke-dasharray="3,2" />
-            <text x="220" y="34" font-size="11" font-weight="700" fill="#fef08a">USB 쪽 2핀 (RESET - GND)</text>
-            <text x="220" y="52" font-size="10" fill="#cbd5e1">점퍼선으로 1초간 접촉 후 해제</text>
-            <circle cx="52" cy="108" r="9" fill="#f8fafc" stroke="#94a3b8" stroke-width="2" />
-            <circle cx="52" cy="108" r="4" fill="#ef4444" />
-            <text x="68" y="112" font-size="10" fill="#94a3b8">리셋 버튼 (메인칩용 — 이 버튼 아님)</text>
-          </svg>
-        </div>
+      <div class="sidebar-status">
+        <div id="agentBadge" class="pill offline">로컬 서버 확인 중...</div>
+        <div id="fwBadge" class="pill muted">펌웨어: -</div>
+        <div id="runBadge" class="pill muted">구동: -</div>
+      </div>
 
-        <div class="actions-row">
-          <button id="btnFlashLocal" class="btn primary" disabled>DFU 펌웨어 설치 실행</button>
-          <button id="btnRemoteUpdate" class="btn secondary hidden">원격 최신 펌웨어 업데이트</button>
-        </div>
-      </section>
+      <div class="sidebar-footer">
+        <a href="https://github.com/iseohyun/virtual-mouse" target="_blank" rel="noopener">GitHub</a>
+        ·
+        <a href="https://github.com/iseohyun/virtual-mouse/blob/main/THIRD_PARTY_NOTICES.md" target="_blank" rel="noopener">라이선스</a>
+      </div>
+    </aside>
 
-      <!-- Step 2 -->
-      <section id="step2Card" class="card">
-        <div class="card-header">
-          <span class="step-num">2단계</span>
-          <h2>USB 재연결 &amp; 장치 확인</h2>
-          <span id="step2Status" class="status-tag">대기</span>
-        </div>
-        <p id="step2Desc" class="desc">
-          플래싱이 끝나면 <strong>USB 케이블을 한 번 뺐다가 다시 연결</strong>하세요.
-          HID 마우스, HID 키보드, COM 포트가 자동으로 감지됩니다.
-        </p>
-        <div class="device-pills">
-          <span id="pillMouse" class="mini-pill">HID 마우스: -</span>
-          <span id="pillKeyboard" class="mini-pill">HID 키보드: -</span>
-          <span id="pillPort" class="mini-pill">포트: -</span>
-        </div>
-      </section>
+    <!-- Main Workspace -->
+    <div class="main-area">
+      <header class="topbar">
+        <button id="btnToggleDrawer" class="btn-icon" type="button" aria-label="메뉴 열기/닫기">☰</button>
+        <h1 id="pageTitle">설치하기</h1>
+        <span class="topbar-url"><code>http://127.0.0.1:18080</code></span>
+      </header>
 
-      <!-- Step 3 -->
-      <section id="step3Card" class="card">
-        <div class="card-header">
-          <span class="step-num">3단계</span>
-          <h2>로컬 API 서버 연결</h2>
-          <span id="step3Status" class="status-tag">확인 중</span>
-        </div>
-        <p id="step3Desc" class="desc">
-          로컬 서버(<code>http://127.0.0.1:18080</code>)가 백그라운드에서 실행 중이면 자동으로 연결됩니다.
-        </p>
-        <div id="agentInstallHint" class="hint-box hidden">
-          로컬 서버가 아직 실행되지 않았습니다. 아래에서 <code>VirtualMouse-Agent.exe</code>를 받아 실행하거나,
-          개발 환경에서 <code>.\.venv\Scripts\python.exe host\server.py</code>를 실행해 주세요.
-          <div class="actions-row" style="margin-top: 8px;">
-            <a class="btn primary" style="text-decoration: none;"
-               href="https://github.com/iseohyun/virtual-mouse/releases/latest/download/VirtualMouse-Agent.exe"
-               target="_blank" rel="noopener">VirtualMouse-Agent.exe 다운로드</a>
+      <main class="content">
+        <!-- TAB 1: 설치하기 (1단계 / 2단계 / 3단계) -->
+        <section id="tab-install" class="tab-panel active">
+          <div class="steps-grid">
+            <!-- Step 1 -->
+            <article id="step1Card" class="card">
+              <div class="card-header">
+                <span class="step-num">1단계</span>
+                <h2>DFU 모드 진입 &amp; 펌웨어 설치</h2>
+                <span id="step1Status" class="status-tag">대기</span>
+              </div>
+              <p id="step1Desc" class="desc">
+                순정 Arduino Uno R3인 경우, USB 포트 바로 옆 6핀 헤더 중 <strong>가장 가까운 2개 핀(RESET-GND)</strong>을
+                점퍼선으로 1초간 접촉했다 떼어 주세요.
+              </p>
+
+              <div class="diagram-box" id="jumperDiagram">
+                <svg viewBox="0 0 360 150" class="board-svg" aria-label="Arduino Uno R3 16U2 ICSP 2-pin diagram">
+                  <rect x="20" y="15" width="320" height="120" rx="10" fill="#0d4a6b" stroke="#38bdf8" stroke-width="2" />
+                  <rect x="6" y="34" width="54" height="44" rx="4" fill="#cbd5e1" stroke="#64748b" stroke-width="2" />
+                  <text x="33" y="60" text-anchor="middle" font-size="11" font-weight="700" fill="#0f172a">USB</text>
+                  <rect x="82" y="42" width="32" height="32" rx="3" fill="#1e293b" stroke="#94a3b8" stroke-width="1.5" />
+                  <text x="98" y="61" text-anchor="middle" font-size="7.5" fill="#e2e8f0">16U2</text>
+                  <rect x="132" y="32" width="56" height="54" rx="5" fill="#0f172a" stroke="#475569" stroke-width="1.5" />
+                  <circle cx="146" cy="46" r="5" fill="#facc15" stroke="#fef08a" stroke-width="1.5" />
+                  <circle cx="146" cy="70" r="5" fill="#facc15" stroke="#fef08a" stroke-width="1.5" />
+                  <circle cx="160" cy="46" r="4" fill="#94a3b8" />
+                  <circle cx="160" cy="70" r="4" fill="#94a3b8" />
+                  <circle cx="174" cy="46" r="4" fill="#94a3b8" />
+                  <circle cx="174" cy="70" r="4" fill="#94a3b8" />
+                  <path d="M 146 46 C 126 46, 126 70, 146 70" fill="none" stroke="#ef4444" stroke-width="3.5" stroke-linecap="round" />
+                  <line x1="146" y1="40" x2="215" y2="30" stroke="#facc15" stroke-width="1.2" stroke-dasharray="3,2" />
+                  <text x="220" y="34" font-size="11" font-weight="700" fill="#fef08a">USB 쪽 2핀 (RESET - GND)</text>
+                  <text x="220" y="52" font-size="10" fill="#cbd5e1">점퍼선으로 1초간 접촉 후 해제</text>
+                  <circle cx="52" cy="108" r="9" fill="#f8fafc" stroke="#94a3b8" stroke-width="2" />
+                  <circle cx="52" cy="108" r="4" fill="#ef4444" />
+                  <text x="68" y="112" font-size="10" fill="#94a3b8">리셋 버튼 (메인칩용 — 이 버튼 아님)</text>
+                </svg>
+              </div>
+
+              <div class="actions-row">
+                <button id="btnFlashLocal" class="btn primary" disabled>DFU 펌웨어 설치 실행</button>
+                <button id="btnRemoteUpdate" class="btn secondary hidden">원격 최신 펌웨어 업데이트</button>
+              </div>
+            </article>
+
+            <!-- Step 2 -->
+            <article id="step2Card" class="card">
+              <div class="card-header">
+                <span class="step-num">2단계</span>
+                <h2>USB 재연결 &amp; 장치 확인</h2>
+                <span id="step2Status" class="status-tag">대기</span>
+              </div>
+              <p id="step2Desc" class="desc">
+                플래싱이 끝나면 <strong>USB 케이블을 한 번 뺐다가 다시 연결</strong>하세요.
+                HID 마우스, HID 키보드, COM 포트가 자동으로 감지됩니다.
+              </p>
+              <div class="device-pills">
+                <span id="pillMouse" class="mini-pill">HID 마우스: -</span>
+                <span id="pillKeyboard" class="mini-pill">HID 키보드: -</span>
+                <span id="pillPort" class="mini-pill">포트: -</span>
+              </div>
+            </article>
+
+            <!-- Step 3 -->
+            <article id="step3Card" class="card full-width">
+              <div class="card-header">
+                <span class="step-num">3단계</span>
+                <h2>로컬 에이전트(트레이 서버) 설치 및 연결</h2>
+                <span id="step3Status" class="status-tag">확인 중</span>
+              </div>
+              <p id="step3Desc" class="desc">
+                <code>VirtualMouse-Agent.exe</code>를 실행하면 CMD 창 없이 작업 표시줄 트레이(<strong>VM</strong> 아이콘)로 상주하며
+                <code>http://127.0.0.1:18080</code> API 서버가 자동 활성화됩니다.
+              </p>
+              <div id="agentInstallHint" class="hint-box hidden">
+                로컬 에이전트가 아직 실행되지 않았습니다. 아래에서 <code>VirtualMouse-Agent.exe</code>를 다운로드해 실행해 주세요.
+                <div class="actions-row" style="margin-top: 10px;">
+                  <a class="btn primary link-btn"
+                     href="https://github.com/iseohyun/virtual-mouse/releases/latest/download/VirtualMouse-Agent.exe"
+                     target="_blank" rel="noopener">VirtualMouse-Agent.exe 다운로드</a>
+                </div>
+              </div>
+            </article>
           </div>
-        </div>
-      </section>
+        </section>
 
-      <!-- Step 4 -->
-      <section id="step4Card" class="card full-width">
-        <div class="card-header">
-          <span class="step-num">4단계</span>
-          <h2>라이브 자동 클릭 &amp; 키보드 테스트</h2>
-          <span id="step4Status" class="status-tag">준비 대기</span>
-        </div>
-        <p class="desc">
-          시작 버튼을 누르면 아두이노 물리 마우스가 아래 영역에 무작위로 나타나는 타겟 버튼을
-          <strong>사람처럼 곡선으로 따라가며 5회 자동 클릭</strong>합니다.
-        </p>
+        <!-- TAB 2: 테스트 (마우스 자동 클릭 + 키보드 복합 시나리오) -->
+        <section id="tab-test" class="tab-panel">
+          <div class="steps-grid">
+            <!-- Mouse Test -->
+            <article id="step4Card" class="card full-width">
+              <div class="card-header">
+                <span class="step-num">마우스 테스트</span>
+                <h2>라이브 자동 클릭 테스트 (실시간 캘리브레이션)</h2>
+                <span id="step4Status" class="status-tag">준비 대기</span>
+              </div>
+              <p class="desc">
+                시작 버튼을 누르면 아두이노 물리 마우스가 무작위 위치의 타겟 버튼을
+                <strong>사람처럼 곡선으로 따라가며 5회 자동 클릭</strong>합니다.
+              </p>
 
-        <div class="actions-row">
-          <button id="btnStartClickTest" class="btn primary" disabled>자동 클릭 테스트 시작 (5회)</button>
-          <button id="btnStopTest" class="btn danger" disabled>비상 정지</button>
-          <button id="btnCopyLog" class="btn secondary" type="button">로그 복사</button>
-          <span id="scoreText" class="score-text">진행: 0 / 5</span>
-        </div>
+              <div class="actions-row">
+                <button id="btnStartClickTest" class="btn primary" disabled>자동 클릭 테스트 시작 (5회)</button>
+                <button id="btnStopTest" class="btn danger" disabled>비상 정지</button>
+                <button id="btnCopyLog" class="btn secondary" type="button">테스트 로그 복사</button>
+                <span id="scoreText" class="score-text">진행: 0 / 5</span>
+              </div>
 
-        <div id="arena" class="arena">
-          <button id="targetBtn" class="target-btn" type="button">타겟 버튼</button>
-        </div>
+              <div id="arena" class="arena">
+                <button id="targetBtn" class="target-btn" type="button">타겟 버튼</button>
+              </div>
+            </article>
 
-        <div class="kbd-test-row">
-          <input id="kbdInput" type="text" placeholder="키보드 테스트 입력창 (자동으로 클릭 후 타이핑합니다)" />
-          <button id="btnKbdTest" class="btn secondary" disabled>키보드 타이핑 테스트</button>
-        </div>
+            <!-- Keyboard Scenario Test -->
+            <article class="card full-width">
+              <div class="card-header">
+                <span class="step-num">키보드 테스트</span>
+                <h2>키보드 복합 시나리오 테스트</h2>
+                <span id="kbdStatus" class="status-tag">대기</span>
+              </div>
+              <p class="desc">
+                물리 USB 키보드로 <strong>① 입력창 자동 클릭 → ② 1차 문구 타이핑 → ③ Ctrl+A 전체 선택 → ④ Backspace 삭제 → ⑤ 최종 문구 입력</strong>
+                시나리오를 사람처럼 랜덤 간격으로 실행합니다.
+              </p>
 
-        <pre id="logBox" class="log-box">로그 대기 중...</pre>
-      </section>
-    </main>
+              <div class="kbd-test-row">
+                <input id="kbdInput" type="text" placeholder="여기에 물리 USB 키보드가 자동으로 입력·수정합니다" />
+                <button id="btnKbdTest" class="btn primary" disabled>키보드 시나리오 실행</button>
+              </div>
 
-    <footer style="margin-top: 28px; text-align: center; color: #64748b; font-size: 0.82rem;">
-      <a href="https://github.com/iseohyun/virtual-mouse" target="_blank" rel="noopener" style="color: #94a3b8;">GitHub</a>
-      &nbsp;·&nbsp;
-      <a href="https://github.com/iseohyun/virtual-mouse/blob/main/THIRD_PARTY_NOTICES.md" target="_blank" rel="noopener" style="color: #94a3b8;">오픈소스 라이선스</a>
-      &nbsp;·&nbsp;
-      <a href="https://github.com/iseohyun/virtual-mouse/issues" target="_blank" rel="noopener" style="color: #94a3b8;">문의 / 이슈 제보</a>
-    </footer>
+              <ol id="kbdSteps" class="scenario-steps">
+                <li data-step="1">입력창 자동 이동 및 클릭</li>
+                <li data-step="2">"Hello VirtualMouse!" 사람처럼 타이핑</li>
+                <li data-step="3">Ctrl + A 전체 선택 단축키</li>
+                <li data-step="4">Backspace 키로 기존 문구 삭제</li>
+                <li data-step="5">"Keyboard OK 123" 최종 입력 검증</li>
+              </ol>
+
+              <pre id="logBox" class="log-box">테스트 로그 대기 중...</pre>
+            </article>
+          </div>
+        </section>
+
+        <!-- TAB 3: 로그 · 구동 (시작/중지, 종료 + 실시간 서버 로그) -->
+        <section id="tab-logs" class="tab-panel">
+          <article class="card full-width">
+            <div class="card-header">
+              <span class="step-num">구동 제어</span>
+              <h2>로컬 서버 상태 제어 및 실시간 로그</h2>
+              <span id="runtimeStatusTag" class="status-tag">확인 중</span>
+            </div>
+            <p class="desc">
+              CMD 콘솔 창 없이 이 화면에서 로컬 서버의 <strong>시작/중지</strong>, <strong>트레이 에이전트 완전 종료</strong>,
+              그리고 실시간 서버 로그를 직접 확인할 수 있습니다.
+            </p>
+
+            <div class="actions-row">
+              <button id="btnToggleRun" class="btn primary" disabled>일시 중지</button>
+              <button id="btnQuitAgent" class="btn danger" disabled>에이전트 종료</button>
+              <button id="btnRefreshLogs" class="btn secondary" type="button">로그 새로고침</button>
+              <button id="btnClearServerLogs" class="btn secondary" type="button">로그 비우기</button>
+              <button id="btnCopyServerLogs" class="btn secondary" type="button">서버 로그 복사</button>
+            </div>
+
+            <pre id="serverLogBox" class="log-box tall">서버 로그를 불러오는 중...</pre>
+          </article>
+        </section>
+
+        <!-- TAB 4: 안내 (외부 프로그램에서 VM에 JSON 메시지 보내는 방법) -->
+        <section id="tab-guide" class="tab-panel">
+          <div class="steps-grid">
+            <article class="card full-width">
+              <div class="card-header">
+                <span class="step-num">API 안내</span>
+                <h2>외부 프로그램에서 Virtual Mouse 제어하기</h2>
+              </div>
+              <p class="desc">
+                Python, C#, Node.js, PowerShell, AutoHotkey 등 어떤 언어에서든
+                <code>POST http://127.0.0.1:18080/action</code>으로 <strong>JSON(<code>{}</code>) 객체만 전송</strong>하면
+                서버 내부의 <strong>사람 움직임 엔진(베지어 곡선·가감속·손떨림·DPI 보정)</strong>이 자동으로 처리해 물리 USB 마우스/키보드로 입력합니다.
+              </p>
+
+              <h3>1. 호출 예시</h3>
+              <div class="code-grid">
+                <div class="code-block">
+                  <div class="code-head">
+                    <span>PowerShell</span>
+                    <button class="btn-mini copy-code" data-target="codePs" type="button">복사</button>
+                  </div>
+                  <pre id="codePs">Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:18080/action" `
+  -ContentType "application/json" `
+  -Body '{"action": "click_at", "x": 800, "y": 500, "button": "L"}'</pre>
+                </div>
+
+                <div class="code-block">
+                  <div class="code-head">
+                    <span>Python</span>
+                    <button class="btn-mini copy-code" data-target="codePy" type="button">복사</button>
+                  </div>
+                  <pre id="codePy">import requests
+
+requests.post("http://127.0.0.1:18080/action", json={
+    "actions": [
+        {"action": "click_at", "x": 800, "y": 500, "button": "L"},
+        {"action": "sleep", "ms": 150},
+        {"action": "type", "text": "123456"},
+        {"action": "hotkey", "keys": ["enter"]}
+    ]
+})</pre>
+                </div>
+
+                <div class="code-block">
+                  <div class="code-head">
+                    <span>JavaScript / Node.js</span>
+                    <button class="btn-mini copy-code" data-target="codeJs" type="button">복사</button>
+                  </div>
+                  <pre id="codeJs">await fetch("http://127.0.0.1:18080/action", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ action: "move_to", x: 640, y: 360 })
+});</pre>
+                </div>
+              </div>
+
+              <h3>2. 지원 JSON 메시지 명세</h3>
+              <div class="table-wrap">
+                <table class="api-table">
+                  <thead>
+                    <tr>
+                      <th>동작</th>
+                      <th>전달 JSON (<code>POST /action</code>)</th>
+                      <th>설명</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr><td>상대 이동</td><td><code>{"action": "move", "dx": 150, "dy": -80}</code></td><td>곡선 + 가감속 상대 이동</td></tr>
+                    <tr><td>절대 이동</td><td><code>{"action": "move_to", "x": 800, "y": 500}</code></td><td>화면 물리 픽셀 좌표로 정밀 안착</td></tr>
+                    <tr><td>클릭</td><td><code>{"action": "click", "button": "L"}</code></td><td>좌(<code>L</code>)/우(<code>R</code>)/중(<code>M</code>) 클릭</td></tr>
+                    <tr><td>이동 후 클릭</td><td><code>{"action": "click_at", "x": 800, "y": 500}</code></td><td>이동 → 짧은 정지 → 클릭 원샷</td></tr>
+                    <tr><td>더블클릭</td><td><code>{"action": "double_click", "button": "L"}</code></td><td>자연스러운 간격 2회 클릭</td></tr>
+                    <tr><td>드래그</td><td><code>{"action": "drag", "from_x": 300, "from_y": 300, "to_x": 600, "to_y": 400}</code></td><td>시작점 → 누름 → 이동 → 해제</td></tr>
+                    <tr><td>휠 스크롤</td><td><code>{"action": "scroll", "delta": -3}</code></td><td>자연스러운 간격 휠 스크롤</td></tr>
+                    <tr><td>타이핑</td><td><code>{"action": "type", "text": "Hello"}</code></td><td>랜덤 간격 물리 USB 키보드 입력</td></tr>
+                    <tr><td>단축키</td><td><code>{"action": "hotkey", "keys": ["ctrl", "c"]}</code></td><td>조합키 순차 누름 → 역순 해제</td></tr>
+                    <tr><td>대기</td><td><code>{"action": "sleep", "ms": 200}</code></td><td>지정 시간(ms) 대기</td></tr>
+                    <tr><td>연속 실행</td><td><code>{"actions": [ ... ]}</code></td><td>여러 동작을 한 요청으로 순차 실행</td></tr>
+                    <tr><td>비상 해제</td><td><code>{"action": "release_all"}</code></td><td>눌린 모든 버튼·키 즉시 해제</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </article>
+          </div>
+        </section>
+      </main>
+    </div>
   </div>
 
-  <script src="app.js?v=20261124v2"></script>
+  <script src="app.js?v=20261124v3"></script>
 </body>
 </html>
