@@ -1,6 +1,11 @@
 (() => {
   const API_BASE = "http://127.0.0.1:18080";
   const TOTAL_CLICKS = 5;
+  const SW_VERSION = "v1.1.2";
+  const BUILD_TAG = "20261124v5";
+
+  const swLabel = document.getElementById("swVersionLabel");
+  if (swLabel) swLabel.textContent = `SW ${SW_VERSION} · ${BUILD_TAG}`;
 
   const TAB_TITLES = {
     install: "설치하기",
