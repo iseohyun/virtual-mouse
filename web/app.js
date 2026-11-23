@@ -24,6 +24,7 @@
     agentInstallHint: document.getElementById("agentInstallHint"),
     btnStartClickTest: document.getElementById("btnStartClickTest"),
     btnStopTest: document.getElementById("btnStopTest"),
+    btnCopyLog: document.getElementById("btnCopyLog"),
     scoreText: document.getElementById("scoreText"),
     arena: document.getElementById("arena"),
     targetBtn: document.getElementById("targetBtn"),
@@ -35,6 +36,8 @@
   let testRunning = false;
   let stopRequested = false;
   let clickCount = 0;
+  // 클릭 시점 실시간 캘리브레이션: { winX, winY, clientX, clientY, dpr }
+  let calibration = null;
 
   function log(msg) {
     const ts = new Date().toLocaleTimeString();
@@ -49,6 +52,17 @@
     const reason = e.reason && e.reason.message ? e.reason.message : String(e.reason);
     log(`[DIAG:promise] ${reason}`);
   });
+
+  // 테스트 중 실제 클릭이 페이지 어디에 떨어졌는지 디버그 추적
+  document.addEventListener(
+    "click",
+    (e) => {
+      if (!testRunning) return;
+      const targetId = e.target && e.target.id ? `#${e.target.id}` : e.target ? e.target.tagName : "unknown";
+      log(`[DEBUG:click] landed on ${targetId} at client=(${Math.round(e.clientX)}, ${Math.round(e.clientY)}) screen=(${Math.round(e.screenX)}, ${Math.round(e.screenY)})`);
+    },
+    true
+  );
 
   function setTag(node, text, cls = "") {
     node.textContent = text;
@@ -73,21 +87,58 @@
   }
 
   /**
+   * 클릭 이벤트 시점의 브라우저 client 좌표와 로컬 서버의 Windows 물리 커서 좌표를
+   * 1:1 매칭해 툴바·창 보더·DPI·듀얼모니터 오차를 0px로 캘리브레이션합니다.
+   */
+  async function calibrateFromEvent(mouseEvent) {
+    const health = await apiFetch("/health");
+    const dpr = window.devicePixelRatio || 1;
+    if (health.cursor && typeof health.cursor.x === "number") {
+      calibration = {
+        winX: health.cursor.x,
+        winY: health.cursor.y,
+        clientX: mouseEvent.clientX,
+        clientY: mouseEvent.clientY,
+        dpr,
+      };
+      log(
+        `[CALIB] ok: click client=(${Math.round(mouseEvent.clientX)}, ${Math.round(mouseEvent.clientY)}) -> win=(${health.cursor.x}, ${health.cursor.y}), dpr=${dpr}`
+      );
+      return true;
+    }
+    calibration = null;
+    log(`[CALIB] fallback (server cursor=null), dpr=${dpr}, screen=(${window.screenX},${window.screenY}), outer=(${window.outerWidth}x${window.outerHeight}), inner=(${window.innerWidth}x${window.innerHeight})`);
+    return false;
+  }
+
+  /**
    * DOM 요소의 정중앙을 Windows 물리 화면 픽셀 좌표(x, y)로 변환합니다.
-   * 브라우저 상단 툴바 높이(outerHeight - innerHeight)와 DPI 배율(devicePixelRatio)을 반영합니다.
+   * 캘리브레이션 기준점이 있으면 오차 0으로 계산하고, 없으면 창 크기 기반 추정치를 사용합니다.
    */
   function getElementScreenCenter(node) {
     const rect = node.getBoundingClientRect();
+    const elemClientX = rect.left + rect.width / 2;
+    const elemClientY = rect.top + rect.height / 2;
+
+    if (calibration) {
+      return {
+        x: Math.round(calibration.winX + (elemClientX - calibration.clientX) * calibration.dpr),
+        y: Math.round(calibration.winY + (elemClientY - calibration.clientY) * calibration.dpr),
+        elemClientX: Math.round(elemClientX),
+        elemClientY: Math.round(elemClientY),
+      };
+    }
+
     const dpr = window.devicePixelRatio || 1;
     const chromeBorderX = Math.max(0, (window.outerWidth - window.innerWidth) / 2);
     const chromeTopY = Math.max(0, window.outerHeight - window.innerHeight - chromeBorderX);
-
-    const cssX = window.screenX + chromeBorderX + rect.left + rect.width / 2;
-    const cssY = window.screenY + chromeTopY + rect.top + rect.height / 2;
-
+    const cssX = window.screenX + chromeBorderX + elemClientX;
+    const cssY = window.screenY + chromeTopY + elemClientY;
     return {
       x: Math.round(cssX * dpr),
       y: Math.round(cssY * dpr),
+      elemClientX: Math.round(elemClientX),
+      elemClientY: Math.round(elemClientY),
     };
   }
 
@@ -241,7 +292,16 @@
     moveTargetRandomly();
   });
 
-  el.btnStartClickTest.addEventListener("click", async () => {
+  el.btnCopyLog.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(el.logBox.textContent);
+      log("로그를 클립보드에 복사했습니다.");
+    } catch {
+      log("클립보드 복사 실패 — 로그 박스에서 직접 선택해 복사해 주세요.");
+    }
+  });
+
+  el.btnStartClickTest.addEventListener("click", async (evt) => {
     if (testRunning) return;
     testRunning = true;
     stopRequested = false;
@@ -253,19 +313,22 @@
     log("자동 클릭 테스트(5회)를 시작합니다...");
 
     try {
+      await calibrateFromEvent(evt);
       for (let i = 1; i <= TOTAL_CLICKS; i++) {
         if (stopRequested) break;
         moveTargetRandomly();
-        await new Promise((r) => setTimeout(r, 260));
+        await new Promise((r) => setTimeout(r, 280));
         const pos = getElementScreenCenter(el.targetBtn);
-        log(`[${i}/${TOTAL_CLICKS}] 타겟 좌표 (${pos.x}, ${pos.y})로 사람처럼 이동 후 클릭 요청`);
-        await apiFetch("/action", {
+        log(`[${i}/${TOTAL_CLICKS}] 요청 win=(${pos.x}, ${pos.y}) / target client=(${pos.elemClientX}, ${pos.elemClientY})`);
+        const res = await apiFetch("/action", {
           method: "POST",
           body: JSON.stringify({ action: "click_at", x: pos.x, y: pos.y, button: "L" }),
         });
+        const actual = res.result && res.result.cursor ? `(${res.result.cursor.x}, ${res.result.cursor.y})` : "null";
+        log(`[${i}/${TOTAL_CLICKS}] 서버 도달 cursor=${actual}`);
         await new Promise((r) => setTimeout(r, 250));
       }
-      log(stopRequested ? "사용자에 의해 중단되었습니다." : "자동 클릭 테스트 5회 완료!");
+      log(stopRequested ? "사용자에 의해 중단되었습니다." : `자동 클릭 테스트 종료 (성공 ${clickCount}/${TOTAL_CLICKS})`);
     } catch (err) {
       log(`테스트 오류: ${err.message}`);
     } finally {
@@ -287,12 +350,13 @@
     }
   });
 
-  el.btnKbdTest.addEventListener("click", async () => {
+  el.btnKbdTest.addEventListener("click", async (evt) => {
     try {
+      await calibrateFromEvent(evt);
       el.kbdInput.value = "";
       const pos = getElementScreenCenter(el.kbdInput);
-      log(`입력창(${pos.x}, ${pos.y}) 클릭 후 물리 키보드 타이핑 테스트...`);
-      await apiFetch("/action", {
+      log(`입력창 win=(${pos.x}, ${pos.y}) 클릭 후 물리 키보드 타이핑 테스트...`);
+      const res = await apiFetch("/action", {
         method: "POST",
         body: JSON.stringify({
           actions: [
@@ -302,7 +366,7 @@
           ],
         }),
       });
-      log("키보드 타이핑 테스트 완료!");
+      log(`키보드 타이핑 테스트 완료! (${JSON.stringify(res.results && res.results[0] && res.results[0].cursor)})`);
     } catch (err) {
       log(`키보드 테스트 오류: ${err.message}`);
     }
