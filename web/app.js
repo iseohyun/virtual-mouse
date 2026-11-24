@@ -19,8 +19,8 @@
   const FIRMWARE_TIMEOUT_MS = 180000; // 펌웨어 다운로드·플래싱
   // 에이전트가 직접 서빙하는 로컬 가이드인지 (트레이가 #token= 으로 토큰을 넘기는 곳은 여기뿐이다)
   const IS_LOCAL_GUIDE = /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(location.origin);
-  const SW_VERSION = "v1.2.0";
-  const BUILD_TAG = "20261124v9";
+  const SW_VERSION = "v1.2.1";
+  const BUILD_TAG = "20261124v10";
 
   const swLabel = document.getElementById("swVersionLabel");
   if (swLabel) swLabel.textContent = `SW ${SW_VERSION} · ${BUILD_TAG}`;

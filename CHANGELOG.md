@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/lang/ko/).
 
+## [1.2.1] - 2026-11-24
+### Fixed
+- 본문을 읽기 전에 거부한 요청(401·403·413·415)에서 클라이언트가 오류 응답 대신 연결 끊김을 받을 수 있던 문제
+  (남은 본문을 최대 1MB까지 읽은 뒤 응답, 느린 연결은 10초 뒤 정리)
+- 위 문제로 CI에서 간헐적으로 실패하던 HTTP 테스트 (재현 테스트 3개 추가)
+
 ## [1.2.0] - 2026-11-24
 ### Changed
 - **호환성 주의**: 로컬 API의 모든 요청에 `Authorization: Bearer <토큰>`이 필요합니다. 기존 외부 스크립트는 헤더를 추가해야 합니다 (토큰: `%LOCALAPPDATA%\VirtualMouse\api-token`, 트레이 'API 토큰 복사', `vm token`)

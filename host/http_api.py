@@ -77,6 +77,7 @@ STATIC_FILES = (
     "sw.js", "robots.txt", "sitemap.xml",
 )
 CORS_MAX_AGE_SEC = 600
+MAX_DRAIN_BYTES = 1024 * 1024  # 거부한 요청의 본문을 이만큼까지는 읽어 버려 연결이 깔끔하게 닫히게 한다
 
 
 def make_handler(
@@ -90,6 +91,32 @@ def make_handler(
     hosts = allowed_hosts(port)
 
     class VirtualMouseHTTPHandler(BaseHTTPRequestHandler):
+        # 느리거나 멈춘 연결이 처리 스레드를 붙잡지 않게 소켓 읽기·쓰기에 시간 제한을 둔다 (처리 시간과는 무관)
+        timeout = 10
+        _body_consumed = False
+
+        def _drain_unread_body(self) -> None:
+            """본문을 읽기 전에 거부(401·403·413·415 등)할 때, 남은 본문을 읽어 버린다.
+
+            본문을 남긴 채 연결을 닫으면 Windows 가 연결을 RST 로 끊어, 클라이언트가 오류 응답 대신
+            'connection aborted' 를 받을 수 있다. 너무 큰 본문(MAX_DRAIN_BYTES 초과)은 읽지 않는다.
+            """
+            if self._body_consumed or self.command != "POST":
+                return
+            self._body_consumed = True
+            try:
+                remaining = min(int(self.headers.get("Content-Length") or 0), MAX_DRAIN_BYTES)
+            except ValueError:
+                return
+            try:
+                while remaining > 0:
+                    chunk = self.rfile.read(min(65536, remaining))
+                    if not chunk:
+                        break
+                    remaining -= len(chunk)
+            except OSError:
+                pass
+
         def _origin_allowed(self) -> bool:
             origin = self.headers.get("Origin")
             return origin is None or origin in origins
@@ -133,6 +160,7 @@ def make_handler(
                 "(tray menu > API 토큰 복사, or 'vm token').",
             }
             raw = json.dumps(body, ensure_ascii=False).encode("utf-8")
+            self._drain_unread_body()
             self.send_response(401)
             self._send_cors_headers()
             self.send_header("WWW-Authenticate", 'Bearer realm="VirtualMouse"')
@@ -155,6 +183,7 @@ def make_handler(
 
         def _send_json(self, status: int, body: Dict[str, Any], cors: bool = True) -> None:
             raw = json.dumps(body, ensure_ascii=False).encode("utf-8")
+            self._drain_unread_body()
             self.send_response(status)
             if cors:
                 self._send_cors_headers()
@@ -239,7 +268,9 @@ def make_handler(
                 if length < 0 or length > MAX_BODY_BYTES:
                     self._send_json(413, {"ok": False, "error": f"Request body too large (max {MAX_BODY_BYTES} bytes)."})
                     return
-                raw = self.rfile.read(length).decode("utf-8") if length > 0 else ""
+                body_bytes = self.rfile.read(length) if length > 0 else b""
+                self._body_consumed = True
+                raw = body_bytes.decode("utf-8")
                 payload = json.loads(raw) if raw.strip() else {}
 
                 if path in ("/", "/action"):

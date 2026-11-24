@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import socket
+import time
 import unittest
 
 from vm_test_support import TEST_TOKEN, ApiServer, FakeDispatcher
@@ -127,6 +129,70 @@ class HttpApiSecurityTest(unittest.TestCase):
         status, _, _ = self.server.request("POST", "/control/quit", "{}", JSON)
         self.assertEqual(status, 401)
         self.assertEqual(self.server.quit_requests, 0)
+
+
+class EarlyErrorResponseTest(unittest.TestCase):
+    """본문을 읽기 전에 거부할 때도 클라이언트가 오류 응답을 읽을 수 있어야 한다.
+
+    서버가 본문을 남긴 채 연결을 닫으면 Windows 는 연결을 RST 로 끊어, 클라이언트는 415·401·413 대신
+    'connection aborted' 를 받는다 (CI 에서 실제로 났던 실패).
+    """
+
+    def setUp(self) -> None:
+        self.server = ApiServer(FakeDispatcher())
+        self.addCleanup(self.server.close)
+        self.body = json.dumps({"action": "cursor", "pad": "a" * 60_000})
+
+    def _post_and_read_late(self, headers: dict[str, str], body: bytes, wait: float = 0.4) -> bytes:
+        """요청을 다 보낸 뒤 서버가 응답하고 연결을 닫을 때까지 기다렸다가 읽는다 (느린 CI 러너 흉내)."""
+        sock = socket.create_connection(("127.0.0.1", self.server.port), timeout=10)
+        try:
+            lines = [
+                "POST /action HTTP/1.1",
+                f"Host: 127.0.0.1:{self.server.port}",
+                f"Content-Length: {len(body)}",
+                *[f"{k}: {v}" for k, v in headers.items()],
+            ]
+            sock.sendall(("\r\n".join(lines) + "\r\n\r\n").encode("ascii") + body)
+            time.sleep(wait)
+            data = b""
+            while True:
+                chunk = sock.recv(65536)
+                if not chunk:
+                    return data
+                data += chunk
+        finally:
+            sock.close()
+
+    def test_rejected_post_response_survives_late_read(self):
+        body = self.body.encode("ascii")
+        cases = [
+            ({**AUTH, "Content-Type": "text/plain"}, b"415"),
+            (JSON, b"401"),
+            ({**JSON, **AUTH, "Origin": "https://evil.example"}, b"403"),
+        ]
+        for headers, code in cases:
+            with self.subTest(code=code):
+                response = self._post_and_read_late(headers, body)
+                self.assertTrue(response.startswith(b"HTTP/1.0 " + code), response[:40])
+
+    def test_rejected_posts_with_large_body_still_get_a_response(self):
+        cases = [
+            ({**AUTH, "Content-Type": "text/plain"}, 415),
+            (JSON, 401),
+            ({**JSON, **AUTH, "Origin": "https://evil.example"}, 403),
+        ]
+        for headers, expected in cases:
+            for _ in range(15):
+                with self.subTest(expected=expected):
+                    status, _, _ = self.server.request("POST", "/action", self.body, headers)
+                    self.assertEqual(status, expected)
+
+    def test_oversized_body_gets_413_response(self):
+        big = json.dumps({"action": "cursor", "pad": "a" * (MAX_BODY_BYTES * 4)})
+        for _ in range(10):
+            status, _, _ = self.server.request("POST", "/action", big, {**JSON, **AUTH})
+            self.assertEqual(status, 413)
 
 
 class ExclusiveBindTest(unittest.TestCase):
