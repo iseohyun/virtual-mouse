@@ -8,7 +8,7 @@ VirtualMouse 로컬 HTTP JSON API (요청 검사·라우팅).
   4. POST는 application/json만 허용 (text/plain 단순 요청 CSRF 차단), 본문 64KB 상한
   5. 모든 API는 `Authorization: Bearer <토큰>` 필요 (auth.py). 정적 파일과 CORS 프리플라이트만 예외
 
-엔드포인트: GET /health /status /logs, POST /action /firmware/check /firmware/update
+엔드포인트: GET /health /status /logs, POST /action /firmware/check /firmware/update /driver/install
             /control/pause /control/resume /control/quit /logs/clear, 정적 파일 / /guide
 사용처: server.py
 의존: dispatcher(ActionDispatcher), auth, updater(_resource_root)
@@ -285,6 +285,10 @@ def make_handler(
                 if path == "/firmware/update":
                     resp = dispatcher.update_firmware(payload)
                     self._send_json(200, resp)
+                    return
+                if path == "/driver/install":
+                    # 사용자가 버튼·명령으로 요청할 때만 설치한다 (UAC 확인 창이 뜬다). 결과는 status 로 구분한다
+                    self._send_json(200, dispatcher.install_driver())
                     return
                 if path == "/control/pause":
                     self._send_json(200, dispatcher.pause())

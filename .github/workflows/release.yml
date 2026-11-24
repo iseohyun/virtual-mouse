@@ -1,7 +1,8 @@
 name: Build & Publish Release Assets
 
-# 태그(vX.Y.Z)를 올리면 테스트 → 펌웨어 .hex + latest.json → VirtualMouse-Agent.exe 를 빌드해 GitHub Release에 올린다.
+# 태그(vX.Y.Z)를 올리면 테스트 → 펌웨어 .hex + latest.json → wdi-simple → VirtualMouse-Agent.exe 를 빌드해 GitHub Release에 올린다.
 # 외부 도구·액션은 버전/커밋/SHA-256으로 고정한다. 값을 바꿀 때는 scripts/setup.ps1 의 같은 값도 맞춘다.
+# wdi-simple(libwdi 소스·WDK 재배포 MSI·MinGW 툴체인)의 고정 값은 scripts/build_wdi.ps1 에만 있다 (그 스크립트를 그대로 부른다).
 
 on:
   push:
@@ -98,6 +99,12 @@ jobs:
         run: |
           .\scripts\build_release.ps1 -BaseUrl "https://github.com/$env:REPO/releases/download/$env:RELEASE_TAG"
 
+      - name: Build wdi-simple (WinUSB driver installer, pinned sources and toolchain)
+        shell: pwsh
+        run: |
+          # 소스·MSI·툴체인 SHA-256 과 결과 exe 의 재현 빌드 해시를 확인하고, 일회용 VM 이므로 관리자 권한 자체 시험(.cat 서명)까지 돌린다
+          .\scripts\build_wdi.ps1
+
       - name: Build VirtualMouse-Agent.exe
         shell: pwsh
         run: |
@@ -113,10 +120,14 @@ jobs:
           $tag = $env:RELEASE_TAG
           # 펌웨어 버전은 앱 태그와 따로 관리한다 (build_release.ps1이 .ino의 FW_VERSION으로 매니페스트를 만든다)
           $fwVer = (Get-Content -Raw "dist\releases\latest.json" | ConvertFrom-Json).firmware_version
+          # exe 에 들어 있는 wdi-simple(LGPL-3.0)의 대응 소스 사본도 함께 올린다
+          $libwdiSource = @(Get-ChildItem "tools\wdi-simple\libwdi-*.tar.gz")
+          if ($libwdiSource.Count -ne 1) { throw "Expected exactly one libwdi source archive in tools\wdi-simple" }
           $files = @(
             "dist\VirtualMouse-Agent.exe",
             "dist\releases\uno_16u2_mouse_$fwVer.hex",
-            "dist\releases\latest.json"
+            "dist\releases\latest.json",
+            $libwdiSource[0].FullName
           )
           gh release view $tag --repo $env:REPO 2>$null
           if ($LASTEXITCODE -eq 0) {

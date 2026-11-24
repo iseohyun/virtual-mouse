@@ -9,6 +9,7 @@ VirtualMouse CLI (`vm`) — gh CLI 스타일 명령줄 제어 도구
   vm logs --tail 20
   vm check-update
   vm update --local
+  vm driver-install       # DFU 장치에 WinUSB 드라이버 설치 (UAC 확인 창이 뜸)
   vm move 120 -50
   vm click-at 800 500 L
   vm type "Hello HID!"
@@ -33,6 +34,8 @@ from typing import Any
 from auth import default_token_path, read_token
 
 DEFAULT_API = os.environ.get("VMOUSE_API_URL", "http://127.0.0.1:18080")
+# 에이전트는 UAC 응답(최대 120초)과 설치(최대 180초), 확인(최대 15초)을 기다린 뒤 답한다 (driver_install.py)
+DRIVER_INSTALL_TIMEOUT_SEC = 340.0
 
 
 def _request(
@@ -123,6 +126,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_upd.add_argument("--force", action="store_true", help="동일 버전이어도 강제 플래싱")
     p_upd.add_argument("--dry-run", action="store_true", help="다운로드 및 SHA-256 검증만 수행")
 
+    sub.add_parser(
+        "driver-install",
+        help="DFU 장치(03EB:2FEF)에 WinUSB 드라이버 설치 (드라이버가 없을 때만, UAC 확인 창에서 [예] 필요)",
+    )
+
     p_move = sub.add_parser("move", help="사람처럼 상대 곡선 이동")
     p_move.add_argument("dx", type=int)
     p_move.add_argument("dy", type=int)
@@ -201,6 +209,8 @@ def main() -> None:
             "dry_run": args.dry_run,
         }
         _print_json(call("POST", "/firmware/update", body, timeout=60.0))
+    elif cmd == "driver-install":
+        _print_json(call("POST", "/driver/install", {}, timeout=DRIVER_INSTALL_TIMEOUT_SEC))
     elif cmd == "move":
         _print_json(call("POST", "/action", {"action": "move", "dx": args.dx, "dy": args.dy, "human": not args.raw}))
     elif cmd == "move-to":

@@ -76,6 +76,27 @@ class CliTest(unittest.TestCase):
         with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
             self.run_cli("update", "--manifest", "https://evil.example/latest.json")
 
+    def test_driver_install_waits_for_uac_and_install(self):
+        """`vm driver-install` 은 에이전트가 UAC 응답·설치·확인을 모두 기다린 뒤 답할 때까지 기다린다."""
+        import driver_install
+
+        calls: list[tuple] = []
+
+        def fake_request(base, method, path, body=None, timeout=20.0, token=None):
+            calls.append((method, path, body, timeout))
+            return {"ok": True, "status": "installed"}
+
+        with mock.patch.object(cli, "_request", fake_request), mock.patch.object(
+            sys, "argv", ["vm", "--token", TEST_TOKEN, "driver-install"]
+        ), contextlib.redirect_stdout(io.StringIO()):
+            cli.main()
+        method, path, body, timeout = calls[0]
+        self.assertEqual((method, path, body), ("POST", "/driver/install", {}))
+        agent_wait = (
+            driver_install.UAC_RESPONSE_TIMEOUT_SEC + driver_install.INSTALL_TIMEOUT_SEC + driver_install.VERIFY_TIMEOUT_SEC
+        )
+        self.assertGreater(timeout, agent_wait)
+
 
 if __name__ == "__main__":
     unittest.main()

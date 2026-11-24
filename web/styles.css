@@ -381,6 +381,22 @@ body {
   gap: 2px;
 }
 
+.hint-text,
+.hint-sub {
+  margin: 6px 0 0;
+}
+
+.hint-note {
+  margin: 6px 0 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.hint-sub {
+  margin-top: 10px;
+  font-weight: 600;
+}
+
 .token-row {
   display: flex;
   flex-wrap: wrap;

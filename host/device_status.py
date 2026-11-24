@@ -12,7 +12,7 @@ Arduino Uno R3 USB 상태 자동 판별 모듈.
   - no_device  : Arduino 장치가 감지되지 않음
 
 USB 조회(PowerShell, 약 1초)는 결과를 캐시하고 한 번에 하나만 실행한다.
-사용처: dispatcher.py(status), updater.py(CLI)
+사용처: dispatcher.py(status), updater.py(CLI), driver_install.py(DFU 드라이버 확인)
 """
 
 from __future__ import annotations
@@ -25,6 +25,7 @@ import time
 from typing import Any, Dict, Tuple
 
 EXPECTED_FW_VERSION = "1.1.0"
+DFU_HARDWARE_ID = "VID_03EB&PID_2FEF"  # ATmega16U2 DFU 부트로더
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 _USB_CACHE_TTL = 10.0  # 장치가 보일 때
 _USB_EMPTY_CACHE_TTL = 4.0  # 아무 장치도 없을 때 (새로 꽂은 장치를 너무 늦게 알아채지 않게 짧게)
@@ -106,6 +107,16 @@ def _scan_usb_devices_locked() -> list[Dict[str, Any]]:
         return _usb_cache_data
 
 
+def find_dfu_device(devices: list[Dict[str, Any]]) -> Dict[str, Any] | None:
+    """USB 장치 목록에서 DFU 모드의 ATmega16U2(03EB:2FEF)를 찾는다."""
+    return next((d for d in devices if DFU_HARDWARE_ID in (d.get("DeviceID") or "").upper()), None)
+
+
+def dfu_driver_installed(device: Dict[str, Any]) -> bool:
+    """DFU 장치에 dfu-programmer 가 쓰는 WinUSB 드라이버가 정상으로 붙어 있는지."""
+    return (device.get("Service") or "").lower() == "winusb" and (device.get("Status") or "") == "OK"
+
+
 def detect_device_state(
     connected_port: str | None = None,
     firmware_version: str | None = None,
@@ -124,10 +135,7 @@ def detect_device_state(
         and (d.get("Service") or "").lower() == "kbdhid"
         for d in devices
     )
-    dfu_dev = next(
-        (d for d in devices if "VID_03EB&PID_2FEF" in (d.get("DeviceID") or "").upper()),
-        None,
-    )
+    dfu_dev = find_dfu_device(devices)
     stock_dev = next(
         (d for d in devices if "VID_2341&PID_0043" in (d.get("DeviceID") or "").upper()),
         None,
@@ -156,11 +164,12 @@ def detect_device_state(
         }
 
     if dfu_dev is not None:
-        winusb_ok = (dfu_dev.get("Service") or "").lower() == "winusb" and (dfu_dev.get("Status") or "") == "OK"
         return {
             "state": "dfu_ready",
             "skip_setup": False,
-            "dfu_driver_ok": winusb_ok,
+            "dfu_driver_ok": dfu_driver_installed(dfu_dev),
+            # 지금 붙어 있는 드라이버 (없으면 None). WinUSB 가 아닌 드라이버(libusb0 등)는 설치하면 WinUSB 로 바뀐다
+            "dfu_driver_service": dfu_dev.get("Service") or None,
             "expected_version": expected_version,
         }
 

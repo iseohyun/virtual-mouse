@@ -6,8 +6,10 @@ VirtualMouse 액션 실행기 (ActionDispatcher) 와 서버 로그 버퍼 (LogBu
 - 한 요청이 에이전트를 오래 붙잡지 못하게 상한을 두고, release_all 은 진행 중인 동작을 끊고 즉시 실행한다.
 - 로그에는 타이핑한 글자를 남기지 않는다 (redact_action_for_log).
 
+- 펌웨어 업데이트와 WinUSB 드라이버 설치(driver_install)는 같은 잠금(_update_lock)으로 겹치지 않게 한다.
+
 사용처: server.py(생성), http_api.py(요청 처리)
-의존: mouse_client, human_motion, keycodes, device_status, updater
+의존: mouse_client, human_motion, keycodes, device_status, updater, driver_install
 """
 
 from __future__ import annotations
@@ -20,6 +22,8 @@ import threading
 from typing import Any, Dict
 
 from device_status import EXPECTED_FW_VERSION, detect_device_state
+from driver_install import install_dfu_winusb_driver
+from driver_install import is_available as driver_installer_available
 from human_motion import ActionAborted, HumanMouseController, enable_dpi_awareness, get_cursor_pos_safe
 from keycodes import resolve_keycode
 from mouse_client import VirtualMouse, normalize_button, validate_int16
@@ -93,7 +97,7 @@ def redact_action_for_log(cmd: Dict[str, Any]) -> Dict[str, Any]:
 
 
 class UpdateInProgress(RuntimeError):
-    """펌웨어 업데이트가 이미 진행 중이라 새 요청을 받지 않음 (HTTP 409)."""
+    """펌웨어 업데이트나 드라이버 설치가 이미 진행 중이라 새 요청을 받지 않음 (HTTP 409)."""
 
 
 class LogBuffer:
@@ -148,6 +152,7 @@ class ActionDispatcher:
         self._stop_lock = threading.Lock()
         self._stop_generation = 0
         self._update_lock = threading.Lock()
+        self._update_kind: str | None = None  # _update_lock 을 쥔 작업: "firmware" 또는 "driver"
         self._closed = False  # 종료 중: 아직 플래싱을 시작하지 않은 업데이트는 취소한다
         self._last_status: Dict[str, Any] | None = None
         self._last_connect_error: str | None = None
@@ -316,6 +321,9 @@ class ActionDispatcher:
         info["running"] = not paused
         info["busy"] = False
         info["connect_error"] = connect_error
+        # 대시보드가 [드라이버 자동 설치] 버튼을 보일지·잠글지 정한다 (조회만 하고 설치는 하지 않는다)
+        info["driver_installer"] = driver_installer_available()
+        info["driver_installing"] = self._update_kind == "driver"
         self._last_status = dict(info)
         info["cursor"] = self._cursor_dict()
         return info
@@ -339,7 +347,8 @@ class ActionDispatcher:
           다른 릴리즈 서버가 필요하면 에이전트 실행 환경의 VMOUSE_MANIFEST_URL 로만 바꾼다.
         """
         if not self._update_lock.acquire(blocking=False):
-            raise UpdateInProgress("이미 펌웨어 업데이트가 진행 중입니다.")
+            raise UpdateInProgress(self._busy_message())
+        self._update_kind = "firmware"
         try:
             use_local = bool(payload.get("use_local", False))
             force = bool(payload.get("force", False))
@@ -407,7 +416,32 @@ class ActionDispatcher:
                 self.logger.add("펌웨어 플래싱 성공! USB 재연결 대기 중")
                 return result
         finally:
+            self._update_kind = None
             self._update_lock.release()
+
+    def _busy_message(self) -> str:
+        if self._update_kind == "driver":
+            return "WinUSB 드라이버 설치가 진행 중입니다. 끝난 뒤 다시 시도해 주세요."
+        return "이미 펌웨어 업데이트가 진행 중입니다."
+
+    def install_driver(self) -> Dict[str, Any]:
+        """DFU 장치에 WinUSB 드라이버를 설치한다 (사용자가 요청할 때만, UAC 확인 창이 뜬다).
+
+        - 펌웨어 업데이트와 같은 잠금을 써서 둘이 겹치지 않게 한다 (UpdateInProgress -> HTTP 409).
+        - 장치 COM 포트를 쓰지 않으므로 진행 중인 마우스·키보드 동작은 멈추지 않는다.
+        - UAC 응답을 기다리다 먼저 답하는 경우에도, 설치 작업이 끝날 때까지 잠금을 놓지 않는다 (driver_install 참고).
+        """
+        self.logger.add("WinUSB 드라이버 자동 설치 요청")
+        if not self._update_lock.acquire(blocking=False):
+            raise UpdateInProgress(self._busy_message())
+        self._update_kind = "driver"
+
+        def release() -> None:
+            self._update_kind = None
+            self._update_lock.release()
+
+        # install_dfu_winusb_driver 는 어떤 경우에도 release 를 정확히 한 번 부른다 (예외·시간 초과 포함)
+        return install_dfu_winusb_driver(log=self.logger.add, on_finished=release)
 
     @staticmethod
     def _is_emergency(payload: Dict[str, Any]) -> bool:
@@ -585,8 +619,11 @@ class ActionDispatcher:
         raise ValueError(f"Unsupported action: {action!r}")
 
     def is_flashing(self) -> bool:
-        """펌웨어 업데이트가 진행 중인지 (종료가 플래싱을 중간에 끊지 않게 server.py 가 확인한다)."""
-        return self._update_lock.locked()
+        """펌웨어 업데이트가 진행 중인지 (종료가 플래싱을 중간에 끊지 않게 server.py 가 확인한다).
+
+        드라이버 설치는 별도 관리자 프로세스(wdi-simple)가 하므로 에이전트가 끝나도 끊기지 않는다: 여기서 세지 않는다.
+        """
+        return self._update_lock.locked() and self._update_kind == "firmware"
 
     def close(self) -> None:
         self._closed = True

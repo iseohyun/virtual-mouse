@@ -21,7 +21,7 @@
   <meta property="og:locale" content="ko_KR" />
   <meta name="twitter:card" content="summary" />
 
-  <link rel="stylesheet" href="styles.css?v=20261124v10" />
+  <link rel="stylesheet" href="styles.css?v=20261124v12" />
 </head>
 <body>
   <div class="app-shell">
@@ -69,7 +69,7 @@
           ·
           <a href="https://github.com/iseohyun/virtual-mouse/blob/main/THIRD_PARTY_NOTICES.md" target="_blank" rel="noopener">라이선스</a>
         </div>
-        <div id="swVersionLabel" class="sw-version">SW v1.2.1 · 20261124v10</div>
+        <div id="swVersionLabel" class="sw-version">SW v1.3.0 · 20261124v12</div>
       </div>
     </aside>
 
@@ -123,6 +123,23 @@
 
               <div id="driverHint" class="hint-box hidden">
                 <strong>WinUSB 드라이버 설치 (최초 1회)</strong>
+                <div id="driverAuto" class="hidden">
+                  <p class="hint-text">
+                    <strong>[드라이버 자동 설치]</strong>를 누르면 에이전트가 libwdi(<code>wdi-simple</code>)로 이 장치(<code>03EB:2FEF</code>)에만
+                    WinUSB 드라이버를 설치합니다. Windows <strong>사용자 계정 컨트롤</strong> 창이 뜨면 <strong>[예]</strong>를 눌러 주세요.
+                    창이 보이지 않으면 작업 표시줄에서 깜빡이는 방패 아이콘을 누르세요.
+                  </p>
+                  <p id="driverCurrent" class="hint-note hidden"></p>
+                  <p class="hint-note">
+                    설치할 때 libwdi가 만든 자체 서명 인증서가 이 PC의 신뢰할 수 있는 인증서 저장소에 추가됩니다
+                    (Zadig와 같은 방식, 서명이 끝나면 개인 키는 지워짐).
+                  </p>
+                  <div class="actions-row spaced-top">
+                    <button id="btnInstallDriver" class="btn primary" type="button">드라이버 자동 설치</button>
+                  </div>
+                  <p id="driverMsg" class="inline-msg" aria-live="polite"></p>
+                </div>
+                <p class="hint-sub">직접 설치하려면 (Zadig):</p>
                 <ol class="hint-steps">
                   <li><a href="https://zadig.akeo.ie/" target="_blank" rel="noopener">Zadig</a>를 내려받아 실행합니다.</li>
                   <li>메뉴 <strong>Options → List All Devices</strong>를 켭니다.</li>
@@ -391,6 +408,6 @@ await fetch("http://127.0.0.1:18080/action", {
     </div>
   </div>
 
-  <script src="app.js?v=20261124v10"></script>
+  <script src="app.js?v=20261124v12"></script>
 </body>
 </html>

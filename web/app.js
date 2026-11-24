@@ -6,6 +6,7 @@
  *   넘겨 주거나(로컬 가이드에서만), 사용자가 3단계 카드에 붙여 넣으면 이 브라우저(localStorage)에 저장된다.
  * - 사이드바 '비상 정지'는 에이전트와 연결된 동안 언제나 누를 수 있다 (진행 중·대기 중인 동작을 끊고 입력 해제).
  * - 키보드 시나리오는 입력창에 포커스가 있을 때만 키를 보낸다 (다른 앱에 입력되는 사고 방지).
+ * - WinUSB 드라이버는 사용자가 1단계의 [드라이버 자동 설치]를 누를 때만 설치를 요청한다 (에이전트가 UAC 확인 창을 띄움).
  * - 버전 표시: SW_VERSION(SemVer, 승인 후 변경) · BUILD_TAG(YYYYMMDDvN, scripts/bump_build_tag.ps1 로 갱신)
  */
 (() => {
@@ -17,10 +18,11 @@
   const TOKEN_PATTERN = /^[A-Za-z0-9_-]{32,256}$/;
   const FETCH_TIMEOUT_MS = 10000; // 상태 조회 등 짧은 요청
   const FIRMWARE_TIMEOUT_MS = 180000; // 펌웨어 다운로드·플래싱
+  const DRIVER_INSTALL_TIMEOUT_MS = 340000; // 에이전트가 UAC 응답(120초)·설치(180초)·확인(15초)을 기다리는 시간보다 길게
   // 에이전트가 직접 서빙하는 로컬 가이드인지 (트레이가 #token= 으로 토큰을 넘기는 곳은 여기뿐이다)
   const IS_LOCAL_GUIDE = /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(location.origin);
-  const SW_VERSION = "v1.2.1";
-  const BUILD_TAG = "20261124v10";
+  const SW_VERSION = "v1.3.0";
+  const BUILD_TAG = "20261124v12";
 
   const swLabel = document.getElementById("swVersionLabel");
   if (swLabel) swLabel.textContent = `SW ${SW_VERSION} · ${BUILD_TAG}`;
@@ -62,6 +64,10 @@
     pillPort: document.getElementById("pillPort"),
     agentInstallHint: document.getElementById("agentInstallHint"),
     driverHint: document.getElementById("driverHint"),
+    driverAuto: document.getElementById("driverAuto"),
+    driverCurrent: document.getElementById("driverCurrent"),
+    btnInstallDriver: document.getElementById("btnInstallDriver"),
+    driverMsg: document.getElementById("driverMsg"),
     step1Msg: document.getElementById("step1Msg"),
     tokenBox: document.getElementById("tokenBox"),
     tokenInput: document.getElementById("tokenInput"),
@@ -101,6 +107,7 @@
   let calibration = null;
   let pollInFlight = false;
   let flashing = false;
+  let installingDriver = false;
 
   // --- API 토큰 (브라우저별 저장, 저장소를 쓸 수 없으면 이 창에서만 기억) ---
   let apiToken = readStoredToken();
@@ -316,11 +323,12 @@
     applyBusyLocks();
   }
 
-  // 플래싱·테스트 중에는 폴링 결과와 상관없이 관련 버튼을 잠근다 (중복 실행 방지)
+  // 플래싱·드라이버 설치·테스트 중에는 폴링 결과와 상관없이 관련 버튼을 잠근다 (중복 실행 방지)
   function applyBusyLocks() {
-    if (flashing) {
+    if (flashing || installingDriver) {
       el.btnFlashLocal.disabled = true;
       el.btnRemoteUpdate.disabled = true;
+      el.btnInstallDriver.disabled = true;
       el.btnStartClickTest.disabled = true;
       el.btnKbdTest.disabled = true;
     }
@@ -361,7 +369,19 @@
     el.pillPort.textContent = `포트: ${status.port || "-"}`;
     el.pillPort.className = `mini-pill ${status.port ? "ok" : ""}`;
 
-    el.driverHint.classList.toggle("hidden", !(st === "dfu_ready" && !status.dfu_driver_ok));
+    // WinUSB 드라이버가 없는 DFU 장치: 자동 설치(에이전트에 wdi-simple 이 있을 때)와 Zadig 수동 안내를 함께 보인다
+    const needsDriver = st === "dfu_ready" && !status.dfu_driver_ok;
+    el.driverHint.classList.toggle("hidden", !needsDriver);
+    el.driverAuto.classList.toggle("hidden", !(needsDriver && status.driver_installer));
+    el.btnInstallDriver.disabled = Boolean(status.driver_installing);
+    const currentDriver = status.dfu_driver_service;
+    el.driverCurrent.classList.toggle("hidden", !(needsDriver && currentDriver));
+    el.driverCurrent.textContent = currentDriver
+      ? `지금 이 장치에 붙어 있는 드라이버(${currentDriver})는 WinUSB로 바뀝니다.`
+      : "";
+    if (needsDriver && status.driver_installing && !installingDriver) {
+      setInlineMsg(el.driverMsg, "드라이버 설치가 진행 중입니다. Windows 「사용자 계정 컨트롤」 창을 확인해 주세요.");
+    }
 
     if (st === "ready" && !serverPaused) {
       setTag(el.step1Status, "자동 스킵", "ok");
@@ -422,6 +442,13 @@
       setCardState(el.step1Card, "active");
       if (status.dfu_driver_ok) {
         setRich(el.step1Desc, "DFU 모드와 WinUSB 드라이버가 확인되었습니다. ", { strong: "[DFU 펌웨어 설치 실행]" }, "을 눌러 주세요.");
+      } else if (status.driver_installer) {
+        setRich(
+          el.step1Desc,
+          "DFU 모드가 감지되었으나 ",
+          { strong: "WinUSB 드라이버 설치" },
+          "가 필요합니다. 아래 [드라이버 자동 설치]를 누르거나 Zadig로 직접 설치해 주세요."
+        );
       } else {
         setRich(el.step1Desc, "DFU 모드가 감지되었으나 ", { strong: "WinUSB 드라이버 설치" }, "가 필요합니다. 아래 안내를 따라 주세요.");
       }
@@ -450,6 +477,7 @@
     el.btnStartClickTest.disabled = true;
     el.btnKbdTest.disabled = true;
     el.btnFlashLocal.disabled = true;
+    el.btnInstallDriver.disabled = true;
     el.btnRemoteUpdate.classList.add("hidden");
     el.btnEmergencyStop.disabled = true;
   }
@@ -594,6 +622,36 @@
   el.btnRemoteUpdate.addEventListener("click", () => {
     runFirmwareUpdate({ force: false }, "최신 펌웨어를 받아 설치하는 중입니다... (USB 케이블을 뽑지 마세요)");
   });
+
+  // WinUSB 드라이버 자동 설치: 사용자가 이 버튼을 누를 때만 요청하고, UAC 확인 창에서 [예]를 눌러야 진행된다
+  async function installDriver() {
+    if (installingDriver || flashing) return;
+    installingDriver = true;
+    applyBusyLocks();
+    const startText =
+      "드라이버 설치를 요청했습니다. Windows 「사용자 계정 컨트롤」 창이 뜨면 [예]를 눌러 주세요. " +
+      "창이 보이지 않으면 작업 표시줄에서 깜빡이는 방패 아이콘을 누르세요.";
+    setInlineMsg(el.driverMsg, startText);
+    log("WinUSB 드라이버 자동 설치 요청");
+    try {
+      const res = await apiFetch("/driver/install", { method: "POST", body: "{}" }, DRIVER_INSTALL_TIMEOUT_MS);
+      const text = res.message || `결과: ${res.status}`;
+      // 설치는 끝났지만 장치에 아직 적용되지 않은 경우(verified=false)는 주의 색으로 보인다
+      const kind = res.ok && res.verified !== false ? "ok" : "warn";
+      setInlineMsg(el.driverMsg, text, kind);
+      // 설치되면 안내 상자가 사라지므로 결과를 1단계 메시지에도 남긴다
+      if (res.ok) setInlineMsg(el.step1Msg, text, kind);
+      log(`드라이버 자동 설치 결과: ${res.status}`);
+    } catch (err) {
+      setInlineMsg(el.driverMsg, `드라이버 설치 요청 실패: ${err.message}`, "warn");
+      log(`드라이버 설치 요청 실패: ${err.message}`);
+    } finally {
+      installingDriver = false;
+      pollStatus();
+    }
+  }
+
+  el.btnInstallDriver.addEventListener("click", installDriver);
 
   // --- Mouse Live Click Test ---
   el.targetBtn.addEventListener("click", () => {

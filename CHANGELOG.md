@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/lang/ko/).
 
+## [1.3.0] - 2026-11-24
+### Added
+- WinUSB 드라이버 자동 설치: DFU 장치(`03EB:2FEF`)에 WinUSB 드라이버가 없을 때 대시보드 1단계 [드라이버 자동 설치], `vm driver-install`, `POST /driver/install` (UAC 확인 창에서 승인해야 진행, 요청할 때만 실행)
+- libwdi `wdi-simple` v1.5.1을 고정한 소스·툴체인으로 재현 빌드하는 `scripts/build_wdi.ps1` (결과 SHA-256 고정), 에이전트 exe에 번들
+- 릴리즈 자산에 `wdi-simple`의 LGPL 대응 소스(`libwdi-<커밋>.tar.gz`) 추가
+- `/status`에 `driver_installer`·`driver_installing`·`dfu_driver_service`
+- 단위 테스트 31개 (설치 조건·UAC 결과·시간 제한·잠금, API, 고정 값)
+### Changed
+- 펌웨어 업데이트와 드라이버 설치가 같은 잠금을 써서 겹치지 않음 (진행 중이면 409)
+- `provision_uno.ps1`이 `tools\wdi-simple\wdi-simple.exe`를 같은 방식으로 실행하고 실패를 감지
+- Zadig 수동 설치 안내는 대안으로 유지
+### Security
+- 권한 상승은 사용자 요청 + UAC로만, 설치 도구에는 ASCII 상대 경로 인수만 전달
+- 라이선스 고지: libwdi(LGPL-3.0), Microsoft WDF 1.11 재배포 조건, MinGW-w64 런타임
+
 ## [1.2.1] - 2026-11-24
 ### Fixed
 - 본문을 읽기 전에 거부한 요청(401·403·413·415)에서 클라이언트가 오류 응답 대신 연결 끊김을 받을 수 있던 문제

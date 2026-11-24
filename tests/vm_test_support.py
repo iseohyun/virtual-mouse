@@ -5,6 +5,7 @@
 - FakeVirtualMouse: mouse_client.VirtualMouse 대역. 보낸 명령만 기록한다.
 - make_fake_dispatcher(): 가짜 장치로 연결된 실제 ActionDispatcher 를 만든다.
 - ApiServer: http_api.make_handler 로 만든 서버를 임의 포트에 띄우고 요청을 보낸다.
+- FakeElevatedProcess / FakeLauncher: driver_install 의 UAC(ShellExecuteEx) 실행 대역. 실제로 아무것도 실행하지 않는다.
 
 실행: python -m unittest discover -s tests -v   (저장소 루트에서)
 """
@@ -159,6 +160,10 @@ class FakeDispatcher:
         self.calls.append(("update_firmware", payload))
         return {"ok": True, "updated": False}
 
+    def install_driver(self) -> dict:
+        self.calls.append("install_driver")
+        return {"ok": True, "status": "installed", "message": "fake"}
+
     def pause(self) -> dict:
         self.calls.append("pause")
         return {"ok": True, "paused": True}
@@ -166,6 +171,53 @@ class FakeDispatcher:
     def resume(self) -> dict:
         self.calls.append("resume")
         return {"ok": True, "paused": False}
+
+
+class FakeElevatedProcess:
+    """UAC 로 시작한 wdi-simple 대역. exit_code=None 이면 시간 안에 끝나지 않는 프로세스를 흉내 낸다."""
+
+    def __init__(self, exit_code: int | None = 0):
+        self.exit_code = exit_code
+        self.waited_for: list[float] = []
+        self.terminated = False
+        self.closed = False
+
+    def wait(self, timeout: float) -> int | None:
+        self.waited_for.append(timeout)
+        return self.exit_code
+
+    def terminate(self) -> bool:
+        self.terminated = True
+        return True
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class FakeLauncher:
+    """driver_install.launch_elevated 대역: 받은 인수와 그때 작업 폴더의 파일 목록만 기록한다.
+
+    gate 를 주면 그 이벤트가 설정될 때까지 돌아오지 않는다 (사용자가 UAC 창에 답하지 않는 상황).
+    error 를 주면 그 예외를 낸다 (예: driver_install.ElevationCancelled = UAC 거부).
+    """
+
+    def __init__(self, process: FakeElevatedProcess | None = None, error: BaseException | None = None, gate=None):
+        self.process = process or FakeElevatedProcess(0)
+        self.error = error
+        self.gate = gate
+        self.calls: list[dict[str, Any]] = []
+
+    def __call__(self, exe: str, params: str, cwd: str) -> FakeElevatedProcess:
+        import os
+
+        self.calls.append(
+            {"exe": exe, "params": params, "cwd": cwd, "exe_exists": os.path.isfile(exe), "files": sorted(os.listdir(cwd))}
+        )
+        if self.gate is not None:
+            self.gate.wait(10)
+        if self.error is not None:
+            raise self.error
+        return self.process
 
 
 class ApiServer:

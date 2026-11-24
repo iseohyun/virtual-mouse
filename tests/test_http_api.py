@@ -130,6 +130,35 @@ class HttpApiSecurityTest(unittest.TestCase):
         self.assertEqual(status, 401)
         self.assertEqual(self.server.quit_requests, 0)
 
+    # --- 드라이버 자동 설치: 다른 엔드포인트와 같은 출처·토큰 검사 뒤에 있다 ---
+    def test_driver_install_requires_token(self):
+        status, _, _ = self.server.request("POST", "/driver/install", "{}", JSON)
+        self.assertEqual(status, 401)
+        self.assertEqual(self.dispatcher.calls, [])
+
+    def test_driver_install_rejects_foreign_origin_and_plain_text(self):
+        status, _, _ = self.server.request(
+            "POST", "/driver/install", "{}", {**JSON, **AUTH, "Origin": "https://evil.example"}
+        )
+        self.assertEqual(status, 403)
+        status, _, _ = self.server.request("POST", "/driver/install", "{}", {**AUTH, "Content-Type": "text/plain"})
+        self.assertEqual(status, 415)
+        self.assertEqual(self.dispatcher.calls, [])
+
+    def test_driver_install_runs_with_token_from_dashboard(self):
+        status, headers, data = self.server.request(
+            "POST", "/driver/install", "{}", {**JSON, **AUTH, "Origin": PUBLIC_DASHBOARD_ORIGIN}
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(data)["status"], "installed")
+        self.assertEqual(self.dispatcher.calls, ["install_driver"])
+        self.assertEqual(headers.get("access-control-allow-origin"), PUBLIC_DASHBOARD_ORIGIN)
+
+    def test_driver_install_is_post_only(self):
+        status, _, _ = self.server.request("GET", "/driver/install", headers=AUTH)
+        self.assertEqual(status, 404)
+        self.assertEqual(self.dispatcher.calls, [])
+
 
 class EarlyErrorResponseTest(unittest.TestCase):
     """본문을 읽기 전에 거부할 때도 클라이언트가 오류 응답을 읽을 수 있어야 한다.
@@ -222,6 +251,19 @@ class UpdateInProgressTest(unittest.TestCase):
         server = ApiServer(BusyDispatcher())
         self.addCleanup(server.close)
         status, _, data = server.request("POST", "/firmware/update", "{}", {**JSON, **AUTH})
+        self.assertEqual(status, 409)
+        self.assertTrue(json.loads(data)["busy"])
+
+    def test_driver_install_during_update_returns_409(self):
+        from dispatcher import UpdateInProgress
+
+        class BusyDispatcher(FakeDispatcher):
+            def install_driver(self) -> dict:
+                raise UpdateInProgress("이미 펌웨어 업데이트가 진행 중입니다.")
+
+        server = ApiServer(BusyDispatcher())
+        self.addCleanup(server.close)
+        status, _, data = server.request("POST", "/driver/install", "{}", {**JSON, **AUTH})
         self.assertEqual(status, 409)
         self.assertTrue(json.loads(data)["busy"])
 

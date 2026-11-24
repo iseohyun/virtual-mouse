@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import unittest
+from unittest import mock
 
 from vm_test_support import REPO_ROOT
 
@@ -112,6 +113,56 @@ class PinnedToolsTest(unittest.TestCase):
             if stripped.startswith(("arduino-cli ", "winget ", ".\\.venv\\Scripts\\python.exe", "python -m")):
                 with self.subTest(line=stripped):
                     self.fail("외부 명령은 Invoke-Native 로 감싸 종료 코드를 확인해야 합니다")
+
+    def test_build_wdi_downloads_are_pinned(self):
+        """scripts/build_wdi.ps1: 내려받는 것마다 주소와 SHA-256 을 함께 고정하고, 떠다니는 주소를 쓰지 않는다."""
+        text = read("scripts/build_wdi.ps1")
+        urls = re.findall(r'^\s*Url\s*=\s*"([^"]+)"', text, re.M)
+        pinned = re.findall(r'Url\s*=\s*"([^"]+)"\s*\n\s*Sha256\s*=\s*"([0-9a-f]{64})"', text)
+        self.assertEqual(len(urls), 4)  # libwdi 소스, WDK 재배포 MSI, 툴체인, MinGW-w64 런타임 고지
+        self.assertEqual([u for u, _ in pinned], urls, "every Url needs a Sha256 right below it")
+        for url in urls:
+            with self.subTest(url=url):
+                self.assertTrue(url.startswith("https://"))
+                for floating in ("releases/latest", "/master/", "/main/", "fwlink"):
+                    self.assertNotIn(floating, url)
+        commit = find(r'\$LibwdiCommit = "([0-9a-f]{40})"', text, "LibwdiCommit")
+        self.assertIn("/archive/$LibwdiCommit.tar.gz", text)
+        self.assertEqual(len(re.findall(r'\bSha256\s*=\s*"[0-9a-f]{64}"', text)), 7)  # 다운로드 4 + 코인스톨러 2 + 사용 조건 1
+        find(r'\$ExpectedWdiSimpleSha256 = "([0-9a-f]{64})"', text, "ExpectedWdiSimpleSha256")
+        self.assertEqual(len(commit), 40)
+
+    def test_build_wdi_only_extracts_and_never_elevates(self):
+        """빌드 스크립트는 드라이버를 설치하거나 권한을 올리지 않는다 (wdi-simple 은 --extract 로만 실행)."""
+        text = read("scripts/build_wdi.ps1")
+        for forbidden in ("RunAs", "msiexec", "pnputil", "Start-Process"):
+            self.assertNotIn(forbidden, text)
+        runs = [line for line in text.splitlines() if "wdi-simple.exe --" in line]
+        self.assertTrue(runs)
+        for line in runs:
+            with self.subTest(line=line.strip()):
+                self.assertIn("--extract", line)
+
+    def test_wdi_simple_is_built_bundled_and_released(self):
+        release = read(".github/workflows/release.yml")
+        self.assertLess(release.index("build_wdi.ps1"), release.index("build_agent.ps1"))
+        self.assertIn(r"tools\wdi-simple\libwdi-*.tar.gz", release, "LGPL 대응 소스를 릴리즈 자산으로 올린다")
+        agent = read("scripts/build_agent.ps1")
+        self.assertIn(r'Join-Path $RepoRoot "tools\wdi-simple"', agent)
+        self.assertIn(";tools/wdi-simple", agent)
+        for name in ("wdi-simple.exe", "COPYING", "COPYING-LGPL", "WDF-License.rtf", "COPYING.MinGW-w64-runtime.txt", "BUILD-INFO.txt"):
+            self.assertIn(f'"{name}"', agent)
+
+    def test_wdi_simple_paths_agree(self):
+        import driver_install
+
+        expected = REPO_ROOT / "tools" / "wdi-simple" / "wdi-simple.exe"
+        with mock.patch.object(driver_install, "_resource_root", lambda: REPO_ROOT), mock.patch.object(
+            driver_install.Path, "is_file", lambda self: True
+        ):
+            self.assertEqual(driver_install.find_wdi_simple(), expected)
+        self.assertIn(r'$OutDir = Join-Path $RepoRoot "tools\wdi-simple"', read("scripts/build_wdi.ps1"))
+        self.assertIn(r'"tools\wdi-simple\wdi-simple.exe"', read("scripts/provision_uno.ps1"))
 
     def test_python_requirements_are_pinned(self):
         for name in ("host/requirements.txt", "host/requirements-dev.txt"):

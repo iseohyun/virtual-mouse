@@ -72,11 +72,21 @@
 ## 7번 작업: WinUSB 드라이버 자동 설치 (`wdi-simple` + UAC)
 - **목표**: Zadig 없이 에이전트가 DFU 장치(`03EB:2FEF`)에 WinUSB 드라이버를 설치
 - **세부 항목**:
-  - libwdi `wdi-simple`을 고정 소스에서 재현 가능하게 빌드하고 exe에 번들
-  - 사용자가 버튼을 누를 때만 UAC로 권한을 올려 설치 (자동 실행 금지), 인증된 API 뒤에 엔드포인트 추가
-  - 라이선스 고지(libwdi LGPL-3.0) 및 백신 오탐 대응 정리
+  - libwdi `wdi-simple` v1.5.1을 고정 소스에서 재현 가능하게 빌드 (`scripts/build_wdi.ps1`) — 완료
+    - WDK 전체 대신 WDK 8 재배포 MSI에서 WinUSB 코인스톨러 2개만 꺼냄 (관리자 권한·설치 없이 읽기 전용)
+    - MinGW-w64(WinLibs GCC 16.2.0) 툴체인 고정, 결과 exe SHA-256까지 고정 (다른 폴더에서 빌드해도 같은 값 확인)
+  - exe 번들(`build_agent.ps1`), 릴리즈 빌드 단계와 LGPL 대응 소스 자산(`release.yml`) — 완료
+  - `host/driver_install.py`: DFU 장치가 있고 WinUSB가 없을 때만, 사용자가 요청할 때만 UAC로 실행.
+    설치·이미 설치·UAC 거부·실패·시간 초과 구분, UAC 응답 120초·설치 180초 제한 — 완료
+  - `POST /driver/install`(출처·토큰 검사 뒤, 펌웨어 업데이트와 같은 잠금), `vm driver-install`, 대시보드 버튼 — 완료
+  - 라이선스 고지(libwdi LGPL-3.0, Microsoft WDF 재배포 조건, MinGW-w64 런타임) — 완료
+  - 코드 서명·백신 오탐 대응 — **결정 필요** (서명 없는 exe가 UAC 창에 "알 수 없는 게시자"로 보임)
+  - 시험 중 발견: `dfu-programmer launch`(워치독 리셋) 뒤 보드가 USB에 다시 나타나지 않음.
+    펌웨어가 시작할 때 워치독을 끄지 않아 재시작이 반복되는 것으로 보이며, USB를 뺐다 꽂으면 복구됨.
+    펌웨어 업데이트(`host/updater.py`)도 마지막에 같은 명령을 씀 — **별도 작업 필요**
 - **완료 조건**: 실제 DFU 장치에서 드라이버 설치 → `dfu_driver_ok` 확인 → 플래싱 성공
-- **상태**: `[ ] 진행 예정` (별도 작업 브랜치에서 진행, 그동안 대시보드 1단계에 Zadig 설치 안내 표시)
+- **상태**: `[ ] 플래싱 확인 대기` (2026-11-24 실기기 확인: 대시보드 버튼 → UAC 승인 → WinUSB 설치 `installed`,
+  `dfu_driver_ok: true`, `dfu-programmer get bootloader-version` 성공. 플래싱은 아직 안 함. Zadig 수동 안내는 대안으로 유지)
 
 ---
 
