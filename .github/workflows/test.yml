@@ -1,0 +1,38 @@
+name: Tests
+
+# 하드웨어 없이 도는 단위 테스트(tests/)와 웹 스크립트 문법 검사.
+# 릴리즈 워크플로(release.yml)도 빌드 전에 같은 테스트를 돌린다.
+
+on:
+  push:
+    branches-ignore: [main] # main 은 deploy.yml 이 이 워크플로를 불러 배포 전에 돌린다
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Setup Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies (pinned)
+        shell: pwsh
+        run: python -m pip install -r host\requirements.txt
+
+      - name: Run unit tests
+        shell: pwsh
+        run: python -m unittest discover -s tests -v
+
+      - name: Check web script syntax
+        shell: bash
+        run: node --check web/app.js && node --check web/sw.js

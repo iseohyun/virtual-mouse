@@ -1,5 +1,8 @@
 name: Build & Publish Release Assets
 
+# 태그(vX.Y.Z)를 올리면 테스트 → 펌웨어 .hex + latest.json → VirtualMouse-Agent.exe 를 빌드해 GitHub Release에 올린다.
+# 외부 도구·액션은 버전/커밋/SHA-256으로 고정한다. 값을 바꿀 때는 scripts/setup.ps1 의 같은 값도 맞춘다.
+
 on:
   push:
     tags:
@@ -7,66 +10,93 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag (e.g. v1.1.1)"
+        description: "Release tag (e.g. v1.1.4)"
         required: true
         type: string
 
 permissions:
   contents: write
 
+env:
+  ARDUINO_CLI_VERSION: "1.6.0"
+  ARDUINO_AVR_CORE: "arduino:avr@1.8.8"
+  HOODLOADER2_CORE: "HoodLoader2:avr@2.0.5"
+  HID_PROJECT_LIB: "HID-Project@2.8.4"
+  HOODLOADER2_INDEX_URL: "https://raw.githubusercontent.com/NicoHood/HoodLoader2/0c1c4bbf338383cb02757ad965f1dc50657ba984/package_NicoHood_HoodLoader2_index.json"
+  DFU_PROGRAMMER_URL: "https://github.com/dfu-programmer/dfu-programmer/releases/download/v1.1.0/dfu-programmer-x64-1.1.0.zip"
+  DFU_PROGRAMMER_SHA256: "0ab135fd9f7c54d142fdd9112f2183d82f5a362032dc3d52860a84756fe96e27"
+
 jobs:
   release:
     runs-on: windows-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # 수동 실행이면 main 이 아니라 그 태그의 커밋으로 빌드한다 (없는 태그면 여기서 실패해 기존 자산을 덮어쓰지 않음)
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
 
-      - name: Determine tag and version
+      - name: Determine tag
         id: meta
         shell: pwsh
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          $tag = if ("${{ github.event_name }}" -eq "workflow_dispatch") { "${{ inputs.tag }}" } else { "${{ github.ref_name }}" }
-          $ver = $tag.TrimStart("v")
-          echo "tag=$tag" >> $env:GITHUB_OUTPUT
-          echo "version=$ver" >> $env:GITHUB_OUTPUT
+          $tag = if ($env:EVENT_NAME -eq "workflow_dispatch") { $env:INPUT_TAG } else { $env:REF_NAME }
+          if ($tag -notmatch '^v\d+\.\d+\.\d+$') { throw "Release tag must look like v1.2.3 (got '$tag')" }
+          "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
 
-      - name: Install Python dependencies
+      - name: Install Python dependencies (pinned)
         shell: pwsh
         run: |
           python -m venv .venv
           .\.venv\Scripts\python.exe -m pip install --upgrade pip
           .\.venv\Scripts\python.exe -m pip install -r host\requirements.txt -r host\requirements-dev.txt
 
-      - name: Install arduino-cli & cores/libraries
+      - name: Run unit tests
         shell: pwsh
         run: |
-          winget install --id ArduinoSA.CLI --exact --accept-source-agreements --accept-package-agreements
-          $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
-          arduino-cli config init --overwrite
-          arduino-cli config add board_manager.additional_urls https://raw.githubusercontent.com/NicoHood/HoodLoader2/master/package_NicoHood_HoodLoader2_index.json
-          arduino-cli core update-index
-          arduino-cli core install arduino:avr
-          arduino-cli core install HoodLoader2:avr
-          arduino-cli lib install "HID-Project"
+          .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 
-      - name: Download dfu-programmer
+      - name: Install arduino-cli & cores/libraries (pinned)
+        shell: pwsh
+        run: |
+          winget install --id ArduinoSA.CLI --exact --version $env:ARDUINO_CLI_VERSION --accept-source-agreements --accept-package-agreements
+          $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+          arduino-cli core update-index --additional-urls $env:HOODLOADER2_INDEX_URL
+          if ($LASTEXITCODE -ne 0) { throw "core update-index failed" }
+          arduino-cli core install $env:ARDUINO_AVR_CORE --additional-urls $env:HOODLOADER2_INDEX_URL
+          if ($LASTEXITCODE -ne 0) { throw "core install $env:ARDUINO_AVR_CORE failed" }
+          arduino-cli core install $env:HOODLOADER2_CORE --additional-urls $env:HOODLOADER2_INDEX_URL
+          if ($LASTEXITCODE -ne 0) { throw "core install $env:HOODLOADER2_CORE failed" }
+          arduino-cli lib install $env:HID_PROJECT_LIB
+          if ($LASTEXITCODE -ne 0) { throw "lib install $env:HID_PROJECT_LIB failed" }
+
+      - name: Download dfu-programmer (SHA-256 verified)
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path tools | Out-Null
           $zip = "tools\dfu-programmer-x64-1.1.0.zip"
-          Invoke-WebRequest -Uri "https://github.com/dfu-programmer/dfu-programmer/releases/download/v1.1.0/dfu-programmer-x64-1.1.0.zip" -OutFile $zip
+          Invoke-WebRequest -Uri $env:DFU_PROGRAMMER_URL -OutFile $zip
+          $actual = (Get-FileHash -Path $zip -Algorithm SHA256).Hash.ToLower()
+          if ($actual -ne $env:DFU_PROGRAMMER_SHA256) { throw "dfu-programmer SHA-256 mismatch: $actual" }
           Expand-Archive -Path $zip -DestinationPath "tools\dfu-programmer" -Force
           Remove-Item $zip -Force
 
       - name: Build firmware release artifacts (.hex + latest.json)
         shell: pwsh
+        env:
+          RELEASE_TAG: ${{ steps.meta.outputs.tag }}
+          REPO: ${{ github.repository }}
         run: |
-          .\scripts\build_release.ps1 -BaseUrl "https://github.com/${{ github.repository }}/releases/download/${{ steps.meta.outputs.tag }}"
+          .\scripts\build_release.ps1 -BaseUrl "https://github.com/$env:REPO/releases/download/$env:RELEASE_TAG"
 
       - name: Build VirtualMouse-Agent.exe
         shell: pwsh
@@ -76,9 +106,11 @@ jobs:
       - name: Publish GitHub Release with assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.meta.outputs.tag }}
+          REPO: ${{ github.repository }}
         shell: pwsh
         run: |
-          $tag = "${{ steps.meta.outputs.tag }}"
+          $tag = $env:RELEASE_TAG
           # 펌웨어 버전은 앱 태그와 따로 관리한다 (build_release.ps1이 .ino의 FW_VERSION으로 매니페스트를 만든다)
           $fwVer = (Get-Content -Raw "dist\releases\latest.json" | ConvertFrom-Json).firmware_version
           $files = @(
@@ -86,9 +118,9 @@ jobs:
             "dist\releases\uno_16u2_mouse_$fwVer.hex",
             "dist\releases\latest.json"
           )
-          gh release view $tag --repo ${{ github.repository }} 2>$null
+          gh release view $tag --repo $env:REPO 2>$null
           if ($LASTEXITCODE -eq 0) {
-            gh release upload $tag @files --repo ${{ github.repository }} --clobber
+            gh release upload $tag @files --repo $env:REPO --clobber
           } else {
-            gh release create $tag @files --repo ${{ github.repository }} --title "$tag - Virtual Mouse" --generate-notes
+            gh release create $tag @files --repo $env:REPO --title "$tag - Virtual Mouse" --generate-notes
           }

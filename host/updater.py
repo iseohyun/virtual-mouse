@@ -134,18 +134,25 @@ def download_and_verify_firmware(
 
 
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+# dfu-programmer 가 멈추면 에이전트 전체(비상 정지 포함)가 멈추므로 단계마다 시간 제한을 둔다
+DFU_PROBE_TIMEOUT_SEC = 5.0
+DFU_STEP_TIMEOUT_SEC = 60.0
 
 
 def wait_for_dfu_ready(timeout: float = 8.0) -> bool:
     dfu_exe = find_dfu_programmer()
     deadline = time.time() + timeout
     while time.time() < deadline:
-        res = subprocess.run(
-            [str(dfu_exe), "atmega16u2", "get", "bootloader-version"],
-            capture_output=True,
-            text=True,
-            creationflags=_NO_WINDOW,
-        )
+        try:
+            res = subprocess.run(
+                [str(dfu_exe), "atmega16u2", "get", "bootloader-version"],
+                capture_output=True,
+                text=True,
+                creationflags=_NO_WINDOW,
+                timeout=DFU_PROBE_TIMEOUT_SEC,
+            )
+        except subprocess.TimeoutExpired:
+            continue
         if res.returncode == 0:
             return True
         time.sleep(0.5)
@@ -164,7 +171,14 @@ def flash_hex_via_dfu(hex_path: Path) -> Dict[str, Any]:
     ]
     logs: Dict[str, str] = {}
     for name, cmd in steps:
-        res = subprocess.run(cmd, capture_output=True, text=True, creationflags=_NO_WINDOW)
+        try:
+            res = subprocess.run(
+                cmd, capture_output=True, text=True, creationflags=_NO_WINDOW, timeout=DFU_STEP_TIMEOUT_SEC
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(
+                f"DFU {name} timed out after {DFU_STEP_TIMEOUT_SEC:.0f}s. USB 케이블을 다시 꽂고 DFU 모드부터 다시 시도하세요."
+            ) from exc
         logs[name] = (res.stdout + "\n" + res.stderr).strip()
         if res.returncode != 0:
             raise RuntimeError(f"DFU {name} failed (code {res.returncode}): {logs[name]}")

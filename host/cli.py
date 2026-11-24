@@ -14,6 +14,10 @@ VirtualMouse CLI (`vm`) — gh CLI 스타일 명령줄 제어 도구
   vm type "Hello HID!"
   vm hotkey ctrl c
   vm pause / vm resume / vm quit
+  vm token                # 에이전트 API 토큰 출력 (외부 스크립트의 Authorization 헤더용)
+
+인증: 에이전트가 만든 토큰 파일(auth.py)을 자동으로 읽어 `Authorization: Bearer` 헤더로 보낸다.
+      --token 또는 환경 변수 VMOUSE_API_TOKEN 으로 바꿀 수 있다.
 """
 
 from __future__ import annotations
@@ -26,13 +30,24 @@ import urllib.error
 import urllib.request
 from typing import Any
 
+from auth import default_token_path, read_token
+
 DEFAULT_API = os.environ.get("VMOUSE_API_URL", "http://127.0.0.1:18080")
 
 
-def _request(base: str, method: str, path: str, body: dict[str, Any] | None = None, timeout: float = 20.0) -> Any:
+def _request(
+    base: str,
+    method: str,
+    path: str,
+    body: dict[str, Any] | None = None,
+    timeout: float = 20.0,
+    token: str | None = None,
+) -> Any:
     url = f"{base.rstrip('/')}{path}"
     data = json.dumps(body).encode("utf-8") if body is not None else None
     headers = {"Content-Type": "application/json"} if body is not None else {}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -43,8 +58,13 @@ def _request(base: str, method: str, path: str, body: dict[str, Any] | None = No
             err = json.loads(raw)
         except Exception:
             err = {"ok": False, "status": exc.code, "error": raw}
+        if exc.code == 401:
+            err["hint"] = (
+                f"API 토큰이 없거나 틀립니다. 토큰 파일({default_token_path()})이 있는지, "
+                "또는 --token / VMOUSE_API_TOKEN 값이 맞는지 확인하세요."
+            )
         print(json.dumps(err, ensure_ascii=False, indent=2), file=sys.stderr)
-        sys.exit(1)
+        sys.exit(3 if exc.code == 401 else 1)
     except urllib.error.URLError as exc:
         print(
             json.dumps(
@@ -55,6 +75,27 @@ def _request(base: str, method: str, path: str, body: dict[str, Any] | None = No
             file=sys.stderr,
         )
         sys.exit(2)
+    except TimeoutError:
+        # 응답 대기 중 시간 초과는 URLError 로 감싸지지 않는다. 에이전트는 동작을 계속하고 있을 수 있다.
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "error": f"에이전트 응답을 {timeout:.0f}초 동안 기다렸지만 끝나지 않았습니다.",
+                    "hint": "동작은 에이전트에서 계속 진행 중일 수 있습니다. 다시 실행하기 전에 'vm logs'로 확인하고, "
+                    "멈추려면 'vm release-all'을 실행하세요.",
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            file=sys.stderr,
+        )
+        sys.exit(4)
+
+
+def typing_timeout(text: str) -> float:
+    """사람처럼 타이핑하면 한 글자에 평균 약 80ms 가 걸리므로 글 길이에 맞춰 넉넉히 기다린다."""
+    return 30.0 + 0.25 * len(text)
 
 
 def _print_json(data: Any) -> None:
@@ -64,9 +105,11 @@ def _print_json(data: Any) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="vm", description="VirtualMouse CLI (gh-style control tool)")
     parser.add_argument("--api", default=DEFAULT_API, help=f"Local server URL (default: {DEFAULT_API})")
+    parser.add_argument("--token", default=None, help="API token (default: VMOUSE_API_TOKEN or the agent's token file)")
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("status", help="USB 장치, 펌웨어, 구동 상태 조회")
+    sub.add_parser("token", help="에이전트 API 토큰 출력 (외부 스크립트의 Authorization 헤더용)")
     sub.add_parser("health", help="PING, 포트, 커서 좌표 조회")
 
     p_logs = sub.add_parser("logs", help="로컬 서버 로그 조회")
@@ -119,50 +162,69 @@ def main() -> None:
     args = build_parser().parse_args()
     api = args.api
     cmd = args.command
+    token = args.token or read_token()
+
+    def call(method: str, path: str, body: dict[str, Any] | None = None, timeout: float = 20.0) -> Any:
+        return _request(api, method, path, body, timeout=timeout, token=token)
+
+    if cmd == "token":
+        if not token:
+            print(
+                json.dumps(
+                    {"ok": False, "error": f"토큰 파일이 없습니다: {default_token_path()} (에이전트를 한 번 실행하면 만들어집니다)"},
+                    ensure_ascii=False,
+                ),
+                file=sys.stderr,
+            )
+            sys.exit(3)
+        print(token)
+        return
 
     if cmd == "status":
-        _print_json(_request(api, "GET", "/status"))
+        _print_json(call("GET", "/status"))
     elif cmd == "health":
-        _print_json(_request(api, "GET", "/health"))
+        _print_json(call("GET", "/health"))
     elif cmd == "logs":
         if args.clear:
-            _print_json(_request(api, "POST", "/logs/clear", {}))
+            _print_json(call("POST", "/logs/clear", {}))
             return
-        data = _request(api, "GET", "/logs")
+        data = call("GET", "/logs")
         lines = data.get("lines", [])
         for line in lines[-args.tail :]:
             print(line)
     elif cmd == "check-update":
-        _print_json(_request(api, "POST", "/firmware/check", {}))
+        _print_json(call("POST", "/firmware/check", {}))
     elif cmd == "update":
         body: dict[str, Any] = {
             "use_local": args.local,
             "force": args.force,
             "dry_run": args.dry_run,
         }
-        _print_json(_request(api, "POST", "/firmware/update", body, timeout=60.0))
+        _print_json(call("POST", "/firmware/update", body, timeout=60.0))
     elif cmd == "move":
-        _print_json(_request(api, "POST", "/action", {"action": "move", "dx": args.dx, "dy": args.dy, "human": not args.raw}))
+        _print_json(call("POST", "/action", {"action": "move", "dx": args.dx, "dy": args.dy, "human": not args.raw}))
     elif cmd == "move-to":
-        _print_json(_request(api, "POST", "/action", {"action": "move_to", "x": args.x, "y": args.y}))
+        _print_json(call("POST", "/action", {"action": "move_to", "x": args.x, "y": args.y}))
     elif cmd == "click":
-        _print_json(_request(api, "POST", "/action", {"action": "click", "button": args.button.upper()}))
+        _print_json(call("POST", "/action", {"action": "click", "button": args.button.upper()}))
     elif cmd == "click-at":
-        _print_json(_request(api, "POST", "/action", {"action": "click_at", "x": args.x, "y": args.y, "button": args.button.upper()}))
+        _print_json(call("POST", "/action", {"action": "click_at", "x": args.x, "y": args.y, "button": args.button.upper()}))
     elif cmd == "type":
-        _print_json(_request(api, "POST", "/action", {"action": "type", "text": args.text, "human": not args.raw}))
+        body = {"action": "type", "text": args.text, "human": not args.raw}
+        _print_json(call("POST", "/action", body, timeout=typing_timeout(args.text)))
     elif cmd == "hotkey":
-        _print_json(_request(api, "POST", "/action", {"action": "hotkey", "keys": args.keys}))
+        _print_json(call("POST", "/action", {"action": "hotkey", "keys": args.keys}))
     elif cmd == "action":
-        _print_json(_request(api, "POST", "/action", json.loads(args.json_payload)))
+        # 임의 JSON 은 연속 동작(actions)이 길 수 있으므로 넉넉히 기다린다
+        _print_json(call("POST", "/action", json.loads(args.json_payload), timeout=600.0))
     elif cmd == "release-all":
-        _print_json(_request(api, "POST", "/action", {"action": "release_all"}))
+        _print_json(call("POST", "/action", {"action": "release_all"}))
     elif cmd == "pause":
-        _print_json(_request(api, "POST", "/control/pause", {}))
+        _print_json(call("POST", "/control/pause", {}))
     elif cmd == "resume":
-        _print_json(_request(api, "POST", "/control/resume", {}))
+        _print_json(call("POST", "/control/resume", {}))
     elif cmd == "quit":
-        _print_json(_request(api, "POST", "/control/quit", {}))
+        _print_json(call("POST", "/control/quit", {}))
 
 
 if __name__ == "__main__":

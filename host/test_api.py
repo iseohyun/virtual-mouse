@@ -1,6 +1,8 @@
 """
-로컬 HTTP JSON API 서버(http://127.0.0.1:18080) 연동 테스트 스크립트.
+로컬 HTTP JSON API 서버(http://127.0.0.1:18080) 연동 수동 테스트 스크립트 (실제 Arduino 필요).
 외부 프로그램처럼 JSON({})만 보내서 사람 같은 곡선 이동 및 절대 좌표 이동을 검증합니다.
+API 토큰은 에이전트가 만든 토큰 파일(auth.py)에서 자동으로 읽습니다.
+자동 단위 테스트는 저장소 루트의 tests/ 폴더에 있습니다.
 """
 
 from __future__ import annotations
@@ -8,7 +10,17 @@ from __future__ import annotations
 import json
 import urllib.request
 
+from auth import read_token
+
 BASE_URL = "http://127.0.0.1:18080"
+
+
+def _headers(extra: dict | None = None) -> dict:
+    headers = dict(extra or {})
+    token = read_token()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
 
 
 def post_action(payload: dict) -> dict:
@@ -16,7 +28,7 @@ def post_action(payload: dict) -> dict:
     req = urllib.request.Request(
         f"{BASE_URL}/action",
         data=data,
-        headers={"Content-Type": "application/json"},
+        headers=_headers({"Content-Type": "application/json"}),
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=15) as resp:
@@ -24,7 +36,8 @@ def post_action(payload: dict) -> dict:
 
 
 def get_health() -> dict:
-    with urllib.request.urlopen(f"{BASE_URL}/health", timeout=5) as resp:
+    req = urllib.request.Request(f"{BASE_URL}/health", headers=_headers())
+    with urllib.request.urlopen(req, timeout=5) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
 

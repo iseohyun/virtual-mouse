@@ -369,6 +369,75 @@ body {
   line-height: 1.5;
 }
 
+.hint-box a {
+  color: #fef3c7;
+}
+
+.hint-steps {
+  margin: 6px 0 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.token-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.token-row input {
+  flex: 1;
+  min-width: 200px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: #091326;
+  color: var(--text);
+  font-size: 0.88rem;
+}
+
+.spaced-top {
+  margin-top: 10px;
+}
+
+.btn-block {
+  width: 100%;
+  margin-top: 4px;
+}
+
+.inline-msg {
+  margin: 8px 0 0;
+  min-height: 1.2em;
+  font-size: 0.84rem;
+  color: var(--muted);
+}
+
+.inline-msg:empty {
+  display: none;
+}
+
+.inline-msg.ok {
+  color: #86efac;
+}
+
+.inline-msg.warn {
+  color: #fcd34d;
+}
+
+.rule-list {
+  margin: 0 0 8px;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.86rem;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
 .actions-row {
   display: flex;
   flex-wrap: wrap;

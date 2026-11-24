@@ -1,8 +1,26 @@
+/**
+ * Virtual Mouse 대시보드 (https://virtual-mouse.iseohyun.com 및 로컬 가이드 http://127.0.0.1:18080/guide)
+ *
+ * - 로컬 에이전트(API_BASE)의 /status 를 주기적으로 읽어 설치 1~3단계와 테스트·구동 탭을 갱신한다.
+ * - 모든 API 요청에 `Authorization: Bearer <토큰>` 을 붙인다. 토큰은 트레이 '대시보드 보기'가 #token= 으로
+ *   넘겨 주거나(로컬 가이드에서만), 사용자가 3단계 카드에 붙여 넣으면 이 브라우저(localStorage)에 저장된다.
+ * - 사이드바 '비상 정지'는 에이전트와 연결된 동안 언제나 누를 수 있다 (진행 중·대기 중인 동작을 끊고 입력 해제).
+ * - 키보드 시나리오는 입력창에 포커스가 있을 때만 키를 보낸다 (다른 앱에 입력되는 사고 방지).
+ * - 버전 표시: SW_VERSION(SemVer, 승인 후 변경) · BUILD_TAG(YYYYMMDDvN, scripts/bump_build_tag.ps1 로 갱신)
+ */
 (() => {
   const API_BASE = "http://127.0.0.1:18080";
   const TOTAL_CLICKS = 5;
-  const SW_VERSION = "v1.1.3";
-  const BUILD_TAG = "20261124v6";
+  const POLL_INTERVAL_MS = 1800; // 에이전트와 연결된 동안
+  const POLL_INTERVAL_IDLE_MS = 5000; // 에이전트가 없거나 토큰을 기다리는 동안 (요청·콘솔 기록 줄이기)
+  const TOKEN_KEY = "vm.apiToken";
+  const TOKEN_PATTERN = /^[A-Za-z0-9_-]{32,256}$/;
+  const FETCH_TIMEOUT_MS = 10000; // 상태 조회 등 짧은 요청
+  const FIRMWARE_TIMEOUT_MS = 180000; // 펌웨어 다운로드·플래싱
+  // 에이전트가 직접 서빙하는 로컬 가이드인지 (트레이가 #token= 으로 토큰을 넘기는 곳은 여기뿐이다)
+  const IS_LOCAL_GUIDE = /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(location.origin);
+  const SW_VERSION = "v1.2.0";
+  const BUILD_TAG = "20261124v9";
 
   const swLabel = document.getElementById("swVersionLabel");
   if (swLabel) swLabel.textContent = `SW ${SW_VERSION} · ${BUILD_TAG}`;
@@ -22,6 +40,8 @@
     tabPanels: Array.from(document.querySelectorAll(".tab-panel")),
 
     agentBadge: document.getElementById("agentBadge"),
+    btnEmergencyStop: document.getElementById("btnEmergencyStop"),
+    sidebarMsg: document.getElementById("sidebarMsg"),
     fwBadge: document.getElementById("fwBadge"),
     runBadge: document.getElementById("runBadge"),
 
@@ -41,6 +61,13 @@
     pillKeyboard: document.getElementById("pillKeyboard"),
     pillPort: document.getElementById("pillPort"),
     agentInstallHint: document.getElementById("agentInstallHint"),
+    driverHint: document.getElementById("driverHint"),
+    step1Msg: document.getElementById("step1Msg"),
+    tokenBox: document.getElementById("tokenBox"),
+    tokenInput: document.getElementById("tokenInput"),
+    btnSaveToken: document.getElementById("btnSaveToken"),
+    btnClearToken: document.getElementById("btnClearToken"),
+    tokenMsg: document.getElementById("tokenMsg"),
 
     btnStartClickTest: document.getElementById("btnStartClickTest"),
     btnStopTest: document.getElementById("btnStopTest"),
@@ -60,6 +87,8 @@
     btnRefreshLogs: document.getElementById("btnRefreshLogs"),
     btnClearServerLogs: document.getElementById("btnClearServerLogs"),
     btnCopyServerLogs: document.getElementById("btnCopyServerLogs"),
+    btnForgetToken: document.getElementById("btnForgetToken"),
+    runtimeMsg: document.getElementById("runtimeMsg"),
     serverLogBox: document.getElementById("serverLogBox"),
   };
 
@@ -70,6 +99,76 @@
   let stopRequested = false;
   let clickCount = 0;
   let calibration = null;
+  let pollInFlight = false;
+  let flashing = false;
+
+  // --- API 토큰 (브라우저별 저장, 저장소를 쓸 수 없으면 이 창에서만 기억) ---
+  let apiToken = readStoredToken();
+
+  function readStoredToken() {
+    try {
+      return localStorage.getItem(TOKEN_KEY) || "";
+    } catch {
+      return "";
+    }
+  }
+
+  function storeToken(value) {
+    apiToken = value || "";
+    try {
+      if (apiToken) localStorage.setItem(TOKEN_KEY, apiToken);
+      else localStorage.removeItem(TOKEN_KEY);
+    } catch {
+      // 저장소를 막아 둔 브라우저: 이 창에서만 기억한다
+    }
+  }
+
+  // 트레이 '대시보드 보기'가 여는 로컬 가이드 주소(#token=...)에서 토큰을 받아 저장하고 주소창에서 지운다.
+  // 공개 사이트에서는 받지 않는다: 아무 사이트나 링크로 저장된 토큰을 덮어쓰지 못하게 (주소창에서는 지운다).
+  function takeTokenFromHash() {
+    const match = location.hash.match(/^#token=([A-Za-z0-9_-]{32,256})$/);
+    if (!match) return false;
+    if (IS_LOCAL_GUIDE) storeToken(match[1]);
+    history.replaceState(null, "", `${location.pathname}${location.search}#install`);
+    return true;
+  }
+  takeTokenFromHash();
+
+  class AuthRequiredError extends Error {}
+  class AgentTimeoutError extends Error {}
+  class AgentHttpError extends Error {
+    constructor(message, status) {
+      super(message);
+      this.status = status;
+    }
+  }
+
+  // 굵은 글씨가 섞인 안내문을 innerHTML 없이 만든다: setRich(node, "앞 ", { strong: "강조" }, " 뒤")
+  function setRich(node, ...parts) {
+    node.replaceChildren(
+      ...parts.map((part) => {
+        if (typeof part === "string") return document.createTextNode(part);
+        const strong = document.createElement("strong");
+        strong.textContent = part.strong;
+        return strong;
+      })
+    );
+  }
+
+  function setInlineMsg(node, text, kind = "") {
+    if (!node) return;
+    node.textContent = text || "";
+    node.className = `inline-msg ${kind}`.trim();
+  }
+
+  function flashButtonText(btn, text, ms = 1200) {
+    const orig = btn.dataset.label || btn.textContent;
+    btn.dataset.label = orig;
+    btn.textContent = text;
+    setTimeout(() => {
+      btn.textContent = orig;
+    }, ms);
+  }
 
   function log(msg) {
     const ts = new Date().toLocaleTimeString();
@@ -125,14 +224,35 @@
     if (state) card.classList.add(state);
   }
 
-  async function apiFetch(path, options = {}) {
-    const res = await fetch(`${API_BASE}${path}`, {
-      headers: { "Content-Type": "application/json" },
-      ...options,
-    });
-    const data = await res.json();
+  // timeoutMs: 0 이면 기다림 제한 없음 (마우스·키보드 동작은 길 수 있고, 멈추려면 비상 정지를 쓴다)
+  async function apiFetch(path, options = {}, timeoutMs = FETCH_TIMEOUT_MS) {
+    const headers = {};
+    if (options.body !== undefined) headers["Content-Type"] = "application/json";
+    if (apiToken) headers.Authorization = `Bearer ${apiToken}`;
+    const controller = timeoutMs > 0 ? new AbortController() : null;
+    const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+    let res;
+    try {
+      res = await fetch(`${API_BASE}${path}`, { ...options, headers, signal: controller ? controller.signal : undefined });
+    } catch (err) {
+      if (controller && controller.signal.aborted) {
+        throw new AgentTimeoutError(`로컬 서버가 ${Math.round(timeoutMs / 1000)}초 동안 응답하지 않았습니다`);
+      }
+      throw err; // 연결 자체가 안 됨 (에이전트 미실행 등)
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+    let data = {};
+    try {
+      data = await res.json();
+    } catch {
+      data = {};
+    }
+    if (res.status === 401) {
+      throw new AuthRequiredError(data.error || "API token required");
+    }
     if (!res.ok) {
-      throw new Error(data.error || `HTTP ${res.status}`);
+      throw new AgentHttpError(data.error || `HTTP ${res.status}`, res.status);
     }
     return data;
   }
@@ -192,12 +312,34 @@
   }
 
   function updateUI(status) {
+    renderStatus(status);
+    applyBusyLocks();
+  }
+
+  // 플래싱·테스트 중에는 폴링 결과와 상관없이 관련 버튼을 잠근다 (중복 실행 방지)
+  function applyBusyLocks() {
+    if (flashing) {
+      el.btnFlashLocal.disabled = true;
+      el.btnRemoteUpdate.disabled = true;
+      el.btnStartClickTest.disabled = true;
+      el.btnKbdTest.disabled = true;
+    }
+    if (testRunning) {
+      el.btnStartClickTest.disabled = true;
+      el.btnKbdTest.disabled = true;
+      el.btnFlashLocal.disabled = true;
+    }
+  }
+
+  function renderStatus(status) {
     serverOnline = true;
     serverPaused = Boolean(status.paused);
 
-    el.agentBadge.textContent = "로컬 서버 연결됨";
+    el.agentBadge.textContent = status.busy ? "로컬 서버 연결됨 (작업 중)" : "로컬 서버 연결됨";
     el.agentBadge.className = "pill online";
+    el.btnEmergencyStop.disabled = false;
     el.agentInstallHint.classList.add("hidden");
+    el.tokenBox.classList.add("hidden");
     setTag(el.step3Status, "연결됨", "ok");
     setCardState(el.step3Card, "done");
 
@@ -219,12 +361,14 @@
     el.pillPort.textContent = `포트: ${status.port || "-"}`;
     el.pillPort.className = `mini-pill ${status.port ? "ok" : ""}`;
 
+    el.driverHint.classList.toggle("hidden", !(st === "dfu_ready" && !status.dfu_driver_ok));
+
     if (st === "ready" && !serverPaused) {
       setTag(el.step1Status, "자동 스킵", "ok");
       setTag(el.step2Status, "완료", "ok");
       setCardState(el.step1Card, "done");
       setCardState(el.step2Card, "done");
-      el.step1Desc.innerHTML = `최신 펌웨어(<strong>v${fw}</strong>)가 이미 설치되어 있어 1·2단계를 자동으로 건너뛰었습니다.`;
+      setRich(el.step1Desc, "최신 펌웨어(", { strong: `v${fw}` }, ")가 이미 설치되어 있어 1·2단계를 자동으로 건너뛰었습니다.");
       el.jumperDiagram.classList.add("hidden");
       el.btnFlashLocal.disabled = true;
       el.btnRemoteUpdate.classList.add("hidden");
@@ -246,10 +390,27 @@
     if (st === "outdated") {
       setTag(el.step1Status, "업데이트 필요", "warn");
       setCardState(el.step1Card, "active");
-      el.step1Desc.innerHTML = `현재 펌웨어(<strong>v${fw}</strong>)가 구버전입니다. 아래 버튼으로 자동 업데이트할 수 있습니다.`;
+      setRich(el.step1Desc, "현재 펌웨어(", { strong: `v${fw}` }, ")가 구버전입니다. 아래 버튼으로 자동 업데이트할 수 있습니다.");
       el.jumperDiagram.classList.add("hidden");
       el.btnFlashLocal.disabled = false;
       el.btnRemoteUpdate.classList.remove("hidden");
+      return;
+    }
+
+    if (st === "port_busy") {
+      // 펌웨어는 설치돼 있으니 점퍼·설치 안내 대신 포트를 점유한 프로그램을 알려 준다
+      setTag(el.step1Status, "포트 사용 중", "warn");
+      setCardState(el.step1Card, "active");
+      setRich(
+        el.step1Desc,
+        "VirtualMouse 장치는 연결되어 있지만 ",
+        { strong: "COM 포트를 열 수 없습니다" },
+        ". Arduino IDE 시리얼 모니터처럼 포트를 쓰는 프로그램을 닫거나, 에이전트가 두 개 실행 중인지 확인하세요."
+      );
+      if (!flashing) setInlineMsg(el.step1Msg, status.connect_error ? `상세: ${status.connect_error}` : "");
+      el.jumperDiagram.classList.add("hidden");
+      el.btnFlashLocal.disabled = true;
+      el.btnRemoteUpdate.classList.add("hidden");
       return;
     }
 
@@ -259,90 +420,179 @@
     if (st === "dfu_ready") {
       setTag(el.step1Status, "DFU 감지됨", "warn");
       setCardState(el.step1Card, "active");
-      el.step1Desc.innerHTML = status.dfu_driver_ok
-        ? "DFU 모드와 WinUSB 드라이버가 확인되었습니다. <strong>[DFU 펌웨어 설치 실행]</strong>을 눌러 주세요."
-        : "DFU 모드가 감지되었으나 WinUSB 드라이버 설치가 필요합니다.";
+      if (status.dfu_driver_ok) {
+        setRich(el.step1Desc, "DFU 모드와 WinUSB 드라이버가 확인되었습니다. ", { strong: "[DFU 펌웨어 설치 실행]" }, "을 눌러 주세요.");
+      } else {
+        setRich(el.step1Desc, "DFU 모드가 감지되었으나 ", { strong: "WinUSB 드라이버 설치" }, "가 필요합니다. 아래 안내를 따라 주세요.");
+      }
       el.btnFlashLocal.disabled = !status.dfu_driver_ok;
     } else if (st === "stock_uno") {
       setTag(el.step1Status, "점퍼 접촉 필요", "warn");
       setCardState(el.step1Card, "active");
-      el.step1Desc.innerHTML = "순정 Arduino Uno R3가 감지되었습니다. <strong>USB 쪽 2핀(RESET-GND)</strong>을 점퍼선으로 1초간 접촉했다 떼어 주세요.";
+      setRich(el.step1Desc, "순정 Arduino Uno R3가 감지되었습니다. ", { strong: "USB 쪽 2핀(RESET-GND)" }, "을 점퍼선으로 1초간 접촉했다 떼어 주세요.");
       el.btnFlashLocal.disabled = true;
     } else {
       setTag(el.step1Status, "보드 미연결");
       setCardState(el.step1Card, "active");
-      el.step1Desc.innerHTML = "Arduino Uno R3를 USB 포트에 연결해 주세요.";
+      setRich(el.step1Desc, "Arduino Uno R3를 USB 포트에 연결해 주세요.");
       el.btnFlashLocal.disabled = true;
     }
   }
 
-  function updateOfflineUI() {
+  function disableAgentControls() {
     serverOnline = false;
-    el.agentBadge.textContent = "로컬 서버 미실행";
-    el.agentBadge.className = "pill offline";
     el.fwBadge.textContent = "펌웨어: -";
-    el.runBadge.textContent = "구동: 미연결";
     el.runBadge.className = "pill muted";
-    el.agentInstallHint.classList.remove("hidden");
-    setTag(el.step3Status, "미연결", "warn");
+    el.driverHint.classList.add("hidden");
     setCardState(el.step3Card, "active");
-    setTag(el.runtimeStatusTag, "미연결", "warn");
     el.btnToggleRun.disabled = true;
     el.btnQuitAgent.disabled = true;
     el.btnStartClickTest.disabled = true;
     el.btnKbdTest.disabled = true;
     el.btnFlashLocal.disabled = true;
+    el.btnRemoteUpdate.classList.add("hidden");
+    el.btnEmergencyStop.disabled = true;
+  }
+
+  function updateOfflineUI() {
+    disableAgentControls();
+    el.agentBadge.textContent = "로컬 서버 미실행";
+    el.agentBadge.className = "pill offline";
+    el.runBadge.textContent = "구동: 미연결";
+    el.agentInstallHint.classList.remove("hidden");
+    el.tokenBox.classList.add("hidden");
+    setTag(el.step3Status, "미연결", "warn");
+    setTag(el.runtimeStatusTag, "미연결", "warn");
+  }
+
+  // 에이전트는 떠 있지만 응답이 없거나(시간 초과) 오류로 답한 상태: 설치 안내 대신 상태를 그대로 알려 준다
+  function updateAgentErrorUI(message) {
+    disableAgentControls();
+    el.agentBadge.textContent = "로컬 서버 응답 오류";
+    el.agentBadge.className = "pill warn";
+    el.runBadge.textContent = "구동: 확인 필요";
+    el.agentInstallHint.classList.add("hidden");
+    el.tokenBox.classList.add("hidden");
+    setTag(el.step3Status, "응답 오류", "warn");
+    setTag(el.runtimeStatusTag, "응답 오류", "warn");
+    setInlineMsg(el.sidebarMsg, message, "warn");
+  }
+
+  // 에이전트는 실행 중이지만 토큰이 없거나 틀린 상태
+  function updateAuthRequiredUI() {
+    disableAgentControls();
+    el.agentBadge.textContent = "로컬 서버: 토큰 필요";
+    el.agentBadge.className = "pill warn";
+    el.runBadge.textContent = "구동: 인증 대기";
+    el.agentInstallHint.classList.add("hidden");
+    el.tokenBox.classList.remove("hidden");
+    setTag(el.step3Status, "토큰 필요", "warn");
+    setTag(el.runtimeStatusTag, "토큰 필요", "warn");
   }
 
   async function fetchServerLogs() {
     if (!serverOnline) {
-      el.serverLogBox.textContent = "로컬 서버가 실행 중이 아닙니다.";
+      el.serverLogBox.textContent = "로컬 서버에 연결되어 있지 않습니다. (설치하기 탭 3단계를 확인하세요)";
       return;
     }
     try {
       const data = await apiFetch("/logs");
       const lines = data.lines || [];
       el.serverLogBox.textContent = lines.length ? lines.slice().reverse().join("\n") : "아직 기록된 서버 로그가 없습니다.";
-    } catch {
-      el.serverLogBox.textContent = "서버 로그를 불러올 수 없습니다.";
+    } catch (err) {
+      el.serverLogBox.textContent =
+        err instanceof AuthRequiredError ? "API 토큰이 필요합니다. 설치하기 탭 3단계에서 토큰을 입력하세요." : `서버 로그를 불러올 수 없습니다: ${err.message}`;
     }
   }
 
   async function pollStatus() {
+    // 에이전트가 긴 동작(플래싱·타이핑)으로 바쁠 때 요청이 쌓이지 않게 한 번에 하나만 보낸다
+    if (pollInFlight) return;
+    pollInFlight = true;
     try {
       const status = await apiFetch("/status");
+      // 연결이 돌아오면 '응답 오류' 같은 경고만 지운다 ('비상 정지 완료' 같은 안내는 남긴다)
+      if (el.sidebarMsg.classList.contains("warn")) setInlineMsg(el.sidebarMsg, "");
       updateUI(status);
       if (activeTab === "logs") {
         await fetchServerLogs();
       }
-    } catch {
-      updateOfflineUI();
+    } catch (err) {
+      if (err instanceof AuthRequiredError) updateAuthRequiredUI();
+      else if (err instanceof AgentTimeoutError || err instanceof AgentHttpError) updateAgentErrorUI(err.message);
+      else updateOfflineUI();
+    } finally {
+      pollInFlight = false;
     }
   }
 
-  // --- Install Actions ---
-  el.btnFlashLocal.addEventListener("click", async () => {
+  // --- API Token ---
+  el.btnSaveToken.addEventListener("click", async () => {
+    const value = el.tokenInput.value.trim();
+    if (!TOKEN_PATTERN.test(value)) {
+      setInlineMsg(el.tokenMsg, "토큰 형식이 아닙니다. 트레이 메뉴의 'API 토큰 복사'로 다시 복사해 주세요.", "warn");
+      return;
+    }
+    storeToken(value);
+    el.tokenInput.value = "";
+    setInlineMsg(el.tokenMsg, "확인 중...");
     try {
-      el.btnFlashLocal.disabled = true;
-      log("로컬 펌웨어 플래싱을 시작합니다...");
-      await apiFetch("/firmware/update", { method: "POST", body: JSON.stringify({ use_local: true }) });
-      log("플래싱 완료! USB 케이블을 뺐다가 다시 연결해 주세요.");
+      const status = await apiFetch("/status");
+      setInlineMsg(el.tokenMsg, "");
+      updateUI(status);
     } catch (err) {
-      log(`플래싱 오류: ${err.message}`);
+      if (err instanceof AuthRequiredError) {
+        setInlineMsg(el.tokenMsg, "토큰이 맞지 않습니다. 에이전트의 현재 토큰을 다시 복사해 주세요.", "warn");
+      } else {
+        setInlineMsg(el.tokenMsg, `로컬 서버에 연결할 수 없습니다: ${err.message}`, "warn");
+      }
     }
   });
 
-  el.btnRemoteUpdate.addEventListener("click", async () => {
+  el.tokenInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") el.btnSaveToken.click();
+  });
+
+  function forgetToken(msgNode) {
+    storeToken("");
+    setInlineMsg(msgNode, "이 브라우저에 저장된 토큰을 지웠습니다.", "ok");
+    pollStatus();
+  }
+
+  el.btnClearToken.addEventListener("click", () => forgetToken(el.tokenMsg));
+  el.btnForgetToken.addEventListener("click", () => forgetToken(el.runtimeMsg));
+
+  // --- Install Actions ---
+  // 플래싱은 수십 초 걸릴 수 있다: 진행·결과를 1단계 카드에 바로 보여 주고, 끝날 때까지 버튼을 잠근다
+  async function runFirmwareUpdate(body, startText) {
+    if (flashing) return;
+    flashing = true;
+    applyBusyLocks();
+    setInlineMsg(el.step1Msg, startText);
+    log(startText);
     try {
-      el.btnRemoteUpdate.disabled = true;
-      log("원격 최신 펌웨어 업데이트 시작...");
-      const res = await apiFetch("/firmware/update", { method: "POST", body: JSON.stringify({ force: false }) });
-      log(`업데이트 결과: ${JSON.stringify(res)}`);
+      const res = await apiFetch("/firmware/update", { method: "POST", body: JSON.stringify(body) }, FIRMWARE_TIMEOUT_MS);
+      const done = res.updated === false
+        ? `이미 최신 펌웨어입니다 (현재 ${res.current_version || "-"}, 배포 ${res.remote_version || "-"}).`
+        : "플래싱 완료! USB 케이블을 뺐다가 다시 연결해 주세요.";
+      setInlineMsg(el.step1Msg, done, "ok");
+      log(done);
     } catch (err) {
-      log(`업데이트 오류: ${err.message}`);
+      setInlineMsg(el.step1Msg, `펌웨어 설치 실패: ${err.message}`, "warn");
+      log(`펌웨어 설치 실패: ${err.message}`);
     } finally {
+      flashing = false;
       el.btnRemoteUpdate.disabled = false;
+      pollStatus();
     }
+  }
+
+  el.btnFlashLocal.addEventListener("click", () => {
+    runFirmwareUpdate({ use_local: true }, "펌웨어 플래싱 중입니다... (USB 케이블을 뽑지 마세요)");
+  });
+
+  el.btnRemoteUpdate.addEventListener("click", () => {
+    runFirmwareUpdate({ force: false }, "최신 펌웨어를 받아 설치하는 중입니다... (USB 케이블을 뽑지 마세요)");
   });
 
   // --- Mouse Live Click Test ---
@@ -359,6 +609,10 @@
 
   el.btnStartClickTest.addEventListener("click", async (evt) => {
     if (testRunning) return;
+    if (!isPointerClick(evt)) {
+      log("마우스로 시작 버튼을 직접 눌러 주세요. (화면 위치를 맞추려면 실제 클릭 좌표가 필요합니다)");
+      return;
+    }
     testRunning = true;
     stopRequested = false;
     clickCount = 0;
@@ -376,10 +630,14 @@
         await new Promise((r) => setTimeout(r, 280));
         const pos = getElementScreenCenter(el.targetBtn);
         log(`[${i}/${TOTAL_CLICKS}] 요청 win=(${pos.x}, ${pos.y}) / target client=(${pos.elemClientX}, ${pos.elemClientY})`);
-        const res = await apiFetch("/action", {
-          method: "POST",
-          body: JSON.stringify({ action: "click_at", x: pos.x, y: pos.y, button: "L" }),
-        });
+        const res = await apiFetch(
+          "/action",
+          {
+            method: "POST",
+            body: JSON.stringify({ action: "click_at", x: pos.x, y: pos.y, button: "L" }),
+          },
+          0
+        );
         const actual = res.result && res.result.cursor ? `(${res.result.cursor.x}, ${res.result.cursor.y})` : "null";
         log(`[${i}/${TOTAL_CLICKS}] 서버 도달 cursor=${actual}`);
         await new Promise((r) => setTimeout(r, 250));
@@ -394,14 +652,27 @@
     }
   });
 
-  el.btnStopTest.addEventListener("click", async () => {
+  // 비상 정지: 서버가 진행 중인 동작을 끊고, 그 전에 줄 서 있던 요청도 취소한 뒤 눌린 버튼·키를 모두 해제한다
+  async function emergencyStop() {
     stopRequested = true;
     try {
       await apiFetch("/action", { method: "POST", body: JSON.stringify({ action: "release_all" }) });
-    } catch {
-      // ignore
+      log("비상 정지: 진행 중인 동작을 끊고 눌린 버튼·키를 모두 해제했습니다.");
+      setInlineMsg(el.sidebarMsg, "비상 정지 완료", "ok");
+    } catch (err) {
+      const msg = `비상 정지 요청 실패: ${err.message} (USB 케이블을 뽑으면 즉시 멈춥니다)`;
+      log(msg);
+      setInlineMsg(el.sidebarMsg, msg, "warn");
     }
-  });
+  }
+
+  el.btnStopTest.addEventListener("click", emergencyStop);
+  el.btnEmergencyStop.addEventListener("click", emergencyStop);
+
+  // 마우스로 직접 누른 클릭인지: 키보드(Enter·Space)나 스크립트로 누르면 좌표가 0이라 화면 위치를 맞출 수 없다
+  function isPointerClick(evt) {
+    return evt && evt.detail > 0 && (evt.clientX !== 0 || evt.clientY !== 0);
+  }
 
   el.btnCopyLog.addEventListener("click", async () => {
     try {
@@ -426,11 +697,26 @@
     });
   }
 
+  // 키를 보내기 전에 매번 확인: 이 창이 포커스를 갖고 있고 입력창이 선택돼 있어야 한다.
+  // 아니면 Ctrl+A·Backspace 가 다른 앱의 내용을 지울 수 있으므로 키를 보내지 않고 멈춘다.
+  function ensureKbdTarget(stepLabel) {
+    if (stopRequested) throw new Error("사용자가 비상 정지를 눌러 멈췄습니다.");
+    if (!document.hasFocus() || document.activeElement !== el.kbdInput) {
+      throw new Error(`${stepLabel} 전에 입력창이 선택되어 있지 않아 멈췄습니다. 다른 창에 키가 입력되지 않도록 키를 보내지 않았습니다.`);
+    }
+  }
+
   el.btnKbdTest.addEventListener("click", async (evt) => {
     if (testRunning) return;
+    if (!isPointerClick(evt)) {
+      log("마우스로 실행 버튼을 직접 눌러 주세요. (화면 위치를 맞추려면 실제 클릭 좌표가 필요합니다)");
+      return;
+    }
     testRunning = true;
+    stopRequested = false;
     el.btnStartClickTest.disabled = true;
     el.btnKbdTest.disabled = true;
+    el.btnStopTest.disabled = false;
     setTag(el.kbdStatus, "실행 중", "warn");
     el.kbdInput.value = "";
     markKbdStep(0, "");
@@ -441,11 +727,17 @@
 
       markKbdStep(1, "active");
       log(`[KBD 1/5] 입력창(${pos.x}, ${pos.y}) 자동 클릭`);
-      await apiFetch("/action", {
-        method: "POST",
-        body: JSON.stringify({ action: "click_at", x: pos.x, y: pos.y, button: "L" }),
-      });
+      await apiFetch(
+        "/action",
+        {
+          method: "POST",
+          body: JSON.stringify({ action: "click_at", x: pos.x, y: pos.y, button: "L" }),
+        },
+        0
+      );
+      await new Promise((r) => setTimeout(r, 150));
 
+      ensureKbdTarget("타이핑");
       markKbdStep(2, "active");
       log('[KBD 2/5] "Hello VirtualMouse!" 사람처럼 타이핑');
       await apiFetch("/action", {
@@ -459,6 +751,7 @@
         }),
       });
 
+      ensureKbdTarget("Ctrl + A");
       markKbdStep(3, "active");
       log("[KBD 3/5] Ctrl + A 전체 선택");
       await apiFetch("/action", {
@@ -471,6 +764,7 @@
         }),
       });
 
+      ensureKbdTarget("Backspace");
       markKbdStep(4, "active");
       log("[KBD 4/5] Backspace 삭제");
       await apiFetch("/action", {
@@ -483,6 +777,7 @@
         }),
       });
 
+      ensureKbdTarget("최종 입력");
       markKbdStep(5, "active");
       log('[KBD 5/5] "Keyboard OK 123" 최종 입력');
       await apiFetch("/action", {
@@ -495,10 +790,11 @@
       setTag(el.kbdStatus, ok ? "성공" : "확인 필요", ok ? "ok" : "warn");
       log(`키보드 시나리오 완료! 입력창 값: "${el.kbdInput.value}"`);
     } catch (err) {
-      setTag(el.kbdStatus, "오류", "warn");
-      log(`키보드 시나리오 오류: ${err.message}`);
+      setTag(el.kbdStatus, stopRequested ? "중단됨" : "오류", "warn");
+      log(`키보드 시나리오 중단: ${err.message}`);
     } finally {
       testRunning = false;
+      el.btnStopTest.disabled = true;
       pollStatus();
     }
   });
@@ -509,9 +805,11 @@
       el.btnToggleRun.disabled = true;
       const endpoint = serverPaused ? "/control/resume" : "/control/pause";
       await apiFetch(endpoint, { method: "POST", body: "{}" });
+      setInlineMsg(el.runtimeMsg, "");
       await pollStatus();
     } catch (err) {
-      log(`구동 전환 오류: ${err.message}`);
+      setInlineMsg(el.runtimeMsg, `구동 전환 실패: ${err.message}`, "warn");
+      el.btnToggleRun.disabled = false;
     }
   });
 
@@ -519,8 +817,10 @@
     if (!confirm("VirtualMouse 트레이 에이전트를 완전히 종료할까요?")) return;
     try {
       await apiFetch("/control/quit", { method: "POST", body: "{}" });
+      setInlineMsg(el.runtimeMsg, "에이전트를 종료했습니다.", "ok");
       setTimeout(pollStatus, 600);
-    } catch {
+    } catch (err) {
+      setInlineMsg(el.runtimeMsg, `에이전트 종료 요청 실패: ${err.message}`, "warn");
       pollStatus();
     }
   });
@@ -530,17 +830,19 @@
   el.btnClearServerLogs.addEventListener("click", async () => {
     try {
       await apiFetch("/logs/clear", { method: "POST", body: "{}" });
+      setInlineMsg(el.runtimeMsg, "");
       await fetchServerLogs();
-    } catch {
-      // ignore
+    } catch (err) {
+      setInlineMsg(el.runtimeMsg, `로그를 비우지 못했습니다: ${err.message}`, "warn");
     }
   });
 
   el.btnCopyServerLogs.addEventListener("click", async () => {
     try {
       await navigator.clipboard.writeText(el.serverLogBox.textContent);
+      flashButtonText(el.btnCopyServerLogs, "복사됨!");
     } catch {
-      // ignore
+      flashButtonText(el.btnCopyServerLogs, "복사 실패");
     }
   });
 
@@ -551,18 +853,18 @@
       if (!target) return;
       try {
         await navigator.clipboard.writeText(target.textContent);
-        const orig = btn.textContent;
-        btn.textContent = "복사됨!";
-        setTimeout(() => (btn.textContent = orig), 1200);
+        flashButtonText(btn, "복사됨!");
       } catch {
-        // ignore
+        flashButtonText(btn, "복사 실패");
       }
     });
   });
 
   // Register minimal Service Worker for PWA address-bar install button
   if ("serviceWorker" in navigator && location.protocol === "https:") {
-    navigator.serviceWorker.register("sw.js").catch(() => {});
+    navigator.serviceWorker.register("sw.js").catch((err) => {
+      console.warn("Service worker registration failed:", err);
+    });
   }
 
   // Initial route from URL hash
@@ -571,6 +873,23 @@
     switchTab(initialHash);
   }
 
-  pollStatus();
-  setInterval(pollStatus, 1800);
+  // 뒤로 가기·주소 직접 입력으로 # 이 바뀌면 탭을 따라 바꾸고, #token= 이면 토큰을 받는다
+  window.addEventListener("hashchange", () => {
+    if (takeTokenFromHash()) {
+      switchTab("install");
+      pollStatus();
+      return;
+    }
+    const tab = location.hash.replace("#", "");
+    if (TAB_TITLES[tab] && tab !== activeTab) switchTab(tab);
+  });
+
+  function schedulePoll() {
+    setTimeout(async () => {
+      await pollStatus();
+      schedulePoll();
+    }, serverOnline ? POLL_INTERVAL_MS : POLL_INTERVAL_IDLE_MS);
+  }
+
+  pollStatus().finally(schedulePoll);
 })();

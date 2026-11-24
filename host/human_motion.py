@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from typing import Iterable, Tuple
 
 from keycodes import resolve_keycode
-from mouse_client import VirtualMouse
+from mouse_client import VirtualMouse, validate_human_text
 
 
 class ActionAborted(RuntimeError):
@@ -303,8 +303,12 @@ class HumanMouseController:
                 time.sleep(random.uniform(0.035, 0.095))
 
     def type_human(self, text: str) -> None:
-        """ASCII 문자열을 한 글자씩 사람처럼 자연스러운 랜덤 간격으로 타이핑합니다."""
-        for ch in text:
+        """ASCII 문자열을 한 글자씩 사람처럼 자연스러운 랜덤 간격으로 타이핑합니다.
+
+        입력하기 전에 글 전체를 먼저 검사한다: 지원하지 않는 글자가 있으면 한 글자도 입력하지 않는다.
+        줄바꿈(\\r\\n, \\r, \\n)은 Enter, 탭은 Tab 키로 입력한다.
+        """
+        for ch in validate_human_text(text):
             self._check_abort()
             if ch == "\n":
                 self.key_tap_human("enter")

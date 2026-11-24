@@ -3,6 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- 이 페이지의 스크립트·스타일은 자기 출처 파일만, 통신은 자기 출처와 로컬 에이전트(18080)만 허용 -->
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' http://127.0.0.1:18080 http://localhost:18080; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'" />
   <title>Virtual Mouse - Arduino USB HID 마우스 &amp; 키보드 대시보드 | iseohyun</title>
   <meta name="description" content="Arduino Uno R3 기반 물리 USB HID 마우스·키보드 설치 가이드, 라이브 테스트, 구동/로그 제어, 외부 JSON API 안내 대시보드." />
   <link rel="canonical" href="https://virtual-mouse.iseohyun.com/" />
@@ -18,7 +21,7 @@
   <meta property="og:locale" content="ko_KR" />
   <meta name="twitter:card" content="summary" />
 
-  <link rel="stylesheet" href="styles.css?v=20261124v6" />
+  <link rel="stylesheet" href="styles.css?v=20261124v9" />
 </head>
 <body>
   <div class="app-shell">
@@ -55,6 +58,9 @@
         <div id="agentBadge" class="pill offline">로컬 서버 확인 중...</div>
         <div id="fwBadge" class="pill muted">펌웨어: -</div>
         <div id="runBadge" class="pill muted">구동: -</div>
+        <button id="btnEmergencyStop" class="btn danger btn-block" type="button" disabled
+                title="진행 중·대기 중인 마우스·키보드 동작을 끊고 눌린 버튼·키를 모두 해제합니다">비상 정지</button>
+        <p id="sidebarMsg" class="inline-msg" aria-live="polite"></p>
       </div>
 
       <div class="sidebar-footer">
@@ -63,7 +69,7 @@
           ·
           <a href="https://github.com/iseohyun/virtual-mouse/blob/main/THIRD_PARTY_NOTICES.md" target="_blank" rel="noopener">라이선스</a>
         </div>
-        <div id="swVersionLabel" class="sw-version">SW v1.1.3 · 20261124v6</div>
+        <div id="swVersionLabel" class="sw-version">SW v1.2.0 · 20261124v9</div>
       </div>
     </aside>
 
@@ -115,10 +121,22 @@
                 </svg>
               </div>
 
-              <div class="actions-row">
-                <button id="btnFlashLocal" class="btn primary" disabled>DFU 펌웨어 설치 실행</button>
-                <button id="btnRemoteUpdate" class="btn secondary hidden">원격 최신 펌웨어 업데이트</button>
+              <div id="driverHint" class="hint-box hidden">
+                <strong>WinUSB 드라이버 설치 (최초 1회)</strong>
+                <ol class="hint-steps">
+                  <li><a href="https://zadig.akeo.ie/" target="_blank" rel="noopener">Zadig</a>를 내려받아 실행합니다.</li>
+                  <li>메뉴 <strong>Options → List All Devices</strong>를 켭니다.</li>
+                  <li>목록에서 <strong>ATmega16U2 DFU</strong> 또는 USB ID가 <code>03EB 2FEF</code>인 장치를 고릅니다.</li>
+                  <li>오른쪽 드라이버를 <strong>WinUSB</strong>로 두고 <strong>Install Driver</strong>(또는 Replace Driver)를 누릅니다.</li>
+                  <li>설치가 끝나면 이 화면이 자동으로 다음 단계로 넘어갑니다.</li>
+                </ol>
               </div>
+
+              <div class="actions-row">
+                <button id="btnFlashLocal" class="btn primary" type="button" disabled>DFU 펌웨어 설치 실행</button>
+                <button id="btnRemoteUpdate" class="btn secondary hidden" type="button">원격 최신 펌웨어 업데이트</button>
+              </div>
+              <p id="step1Msg" class="inline-msg" aria-live="polite"></p>
             </article>
 
             <!-- Step 2 -->
@@ -152,11 +170,22 @@
               </p>
               <div id="agentInstallHint" class="hint-box hidden">
                 로컬 에이전트가 아직 실행되지 않았습니다. 아래에서 <code>VirtualMouse-Agent.exe</code>를 다운로드해 실행해 주세요.
-                <div class="actions-row" style="margin-top: 10px;">
+                <div class="actions-row spaced-top">
                   <a class="btn primary link-btn"
                      href="https://github.com/iseohyun/virtual-mouse/releases/latest/download/VirtualMouse-Agent.exe"
                      target="_blank" rel="noopener">VirtualMouse-Agent.exe 다운로드</a>
                 </div>
+              </div>
+              <div id="tokenBox" class="hint-box hidden">
+                로컬 에이전트가 <strong>API 토큰</strong>을 요구합니다. 작업 표시줄의 <strong>VM</strong> 트레이 아이콘을 우클릭해
+                <strong>API 토큰 복사</strong>를 누른 뒤 아래에 붙여 넣으세요. 트레이의 <strong>대시보드 보기</strong>로 열면 자동으로 입력됩니다.
+                <div class="token-row">
+                  <input id="tokenInput" type="password" autocomplete="off" spellcheck="false"
+                         placeholder="API 토큰 붙여 넣기" aria-label="API 토큰" />
+                  <button id="btnSaveToken" class="btn primary" type="button">저장</button>
+                  <button id="btnClearToken" class="btn secondary" type="button">지우기</button>
+                </div>
+                <p id="tokenMsg" class="inline-msg" aria-live="polite"></p>
               </div>
             </article>
           </div>
@@ -233,12 +262,14 @@
             </p>
 
             <div class="actions-row">
-              <button id="btnToggleRun" class="btn primary" disabled>일시 중지</button>
-              <button id="btnQuitAgent" class="btn danger" disabled>에이전트 종료</button>
+              <button id="btnToggleRun" class="btn primary" type="button" disabled>일시 중지</button>
+              <button id="btnQuitAgent" class="btn danger" type="button" disabled>에이전트 종료</button>
               <button id="btnRefreshLogs" class="btn secondary" type="button">로그 새로고침</button>
               <button id="btnClearServerLogs" class="btn secondary" type="button">로그 비우기</button>
               <button id="btnCopyServerLogs" class="btn secondary" type="button">서버 로그 복사</button>
+              <button id="btnForgetToken" class="btn secondary" type="button">저장된 토큰 지우기</button>
             </div>
+            <p id="runtimeMsg" class="inline-msg" aria-live="polite"></p>
 
             <pre id="serverLogBox" class="log-box tall">서버 로그를 불러오는 중...</pre>
           </article>
@@ -253,9 +284,14 @@
                 <h2>외부 프로그램에서 Virtual Mouse 제어하기</h2>
               </div>
               <p class="desc">
-                Python, C#, Node.js, PowerShell, AutoHotkey 등 어떤 언어에서든
+                Python, C#, Node.js, PowerShell, AutoHotkey 등 PC에서 실행하는 프로그램은
                 <code>POST http://127.0.0.1:18080/action</code>으로 <strong>JSON(<code>{}</code>) 객체만 전송</strong>하면
                 서버 내부의 <strong>사람 움직임 엔진(베지어 곡선·가감속·손떨림·DPI 보정)</strong>이 자동으로 처리해 물리 USB 마우스/키보드로 입력합니다.
+                모든 요청에는 <strong>API 토큰</strong>을 <code>Authorization: Bearer &lt;토큰&gt;</code> 헤더로 함께 보내야 합니다.
+              </p>
+              <p class="desc">
+                토큰은 에이전트가 처음 실행될 때 만들어 <code>%LOCALAPPDATA%\VirtualMouse\api-token</code> 파일에 저장합니다.
+                트레이 메뉴의 <strong>API 토큰 복사</strong>로도 꺼낼 수 있습니다. 토큰을 바꾸려면 이 파일을 지우고 에이전트를 다시 시작하세요.
               </p>
 
               <h3>1. 호출 예시</h3>
@@ -265,7 +301,9 @@
                     <span>PowerShell</span>
                     <button class="btn-mini copy-code" data-target="codePs" type="button">복사</button>
                   </div>
-                  <pre id="codePs">Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:18080/action" `
+                  <pre id="codePs">$token = Get-Content "$env:LOCALAPPDATA\VirtualMouse\api-token"
+Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:18080/action" `
+  -Headers @{ Authorization = "Bearer $token" } `
   -ContentType "application/json" `
   -Body '{"action": "click_at", "x": 800, "y": 500, "button": "L"}'</pre>
                 </div>
@@ -275,32 +313,52 @@
                     <span>Python</span>
                     <button class="btn-mini copy-code" data-target="codePy" type="button">복사</button>
                   </div>
-                  <pre id="codePy">import requests
+                  <pre id="codePy">import os, requests
 
-requests.post("http://127.0.0.1:18080/action", json={
-    "actions": [
-        {"action": "click_at", "x": 800, "y": 500, "button": "L"},
-        {"action": "sleep", "ms": 150},
-        {"action": "type", "text": "123456"},
-        {"action": "hotkey", "keys": ["enter"]}
-    ]
-})</pre>
+token_file = os.path.join(os.environ["LOCALAPPDATA"], "VirtualMouse", "api-token")
+token = open(token_file, encoding="utf-8").read().strip()
+
+requests.post("http://127.0.0.1:18080/action",
+    headers={"Authorization": f"Bearer {token}"},
+    json={
+        "actions": [
+            {"action": "click_at", "x": 800, "y": 500, "button": "L"},
+            {"action": "sleep", "ms": 150},
+            {"action": "type", "text": "123456"},
+            {"action": "hotkey", "keys": ["enter"]}
+        ]
+    })</pre>
                 </div>
 
                 <div class="code-block">
                   <div class="code-head">
-                    <span>JavaScript / Node.js</span>
+                    <span>Node.js (.mjs)</span>
                     <button class="btn-mini copy-code" data-target="codeJs" type="button">복사</button>
                   </div>
-                  <pre id="codeJs">await fetch("http://127.0.0.1:18080/action", {
+                  <pre id="codeJs">import { readFileSync } from "node:fs";
+import { join } from "node:path";
+const token = readFileSync(
+  join(process.env.LOCALAPPDATA, "VirtualMouse", "api-token"), "utf8").trim();
+
+await fetch("http://127.0.0.1:18080/action", {
   method: "POST",
-  headers: { "Content-Type": "application/json" },
+  headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
   body: JSON.stringify({ action: "move_to", x: 640, y: 360 })
 });</pre>
                 </div>
               </div>
 
-              <h3>2. 지원 JSON 메시지 명세</h3>
+              <h3>2. 보안 규칙과 요청 한도</h3>
+              <ul class="rule-list">
+                <li>브라우저에서는 이 대시보드(<code>virtual-mouse.iseohyun.com</code>)와 로컬 가이드(<code>127.0.0.1:18080</code>)만 호출할 수 있습니다. 다른 웹페이지의 요청은 거부됩니다.</li>
+                <li>POST 요청은 <code>Content-Type: application/json</code>만 받습니다. 토큰이 없거나 틀리면 <code>401</code>을 돌려줍니다.</li>
+                <li>한도: 요청 하나에 <code>actions</code> 200개·본문 64KB, 동작 하나에 <code>sleep</code> 10초·<code>text</code> 2,000자·<code>scroll</code> ±100틱·<code>duration</code> 5초·<code>hotkey</code> 키 8개까지 받습니다. 버튼은 <code>L</code>/<code>R</code>/<code>M</code>만, 좌표·이동량은 ±32767까지입니다.</li>
+                <li>타이핑은 ASCII 글자와 줄바꿈·탭만 됩니다. 지원하지 않는 글자가 있으면 한 글자도 입력하지 않고 <code>400</code>을 돌려줍니다.</li>
+                <li><code>{"action": "release_all"}</code>(비상 정지)은 진행 중인 동작을 끊고, 그 전에 줄 서 있던 요청도 취소한 뒤 즉시 실행됩니다. 취소된 요청은 <code>409</code>를 받습니다. 사이드바와 트레이 메뉴의 <strong>비상 정지</strong>도 같습니다.</li>
+                <li>서버 로그에는 타이핑한 글자를 남기지 않습니다.</li>
+              </ul>
+
+              <h3>3. 지원 JSON 메시지 명세</h3>
               <div class="table-wrap">
                 <table class="api-table">
                   <thead>
@@ -322,7 +380,7 @@ requests.post("http://127.0.0.1:18080/action", json={
                     <tr><td>단축키</td><td><code>{"action": "hotkey", "keys": ["ctrl", "c"]}</code></td><td>조합키 순차 누름 → 역순 해제</td></tr>
                     <tr><td>대기</td><td><code>{"action": "sleep", "ms": 200}</code></td><td>지정 시간(ms) 대기</td></tr>
                     <tr><td>연속 실행</td><td><code>{"actions": [ ... ]}</code></td><td>여러 동작을 한 요청으로 순차 실행</td></tr>
-                    <tr><td>비상 해제</td><td><code>{"action": "release_all"}</code></td><td>눌린 모든 버튼·키 즉시 해제</td></tr>
+                    <tr><td>비상 정지</td><td><code>{"action": "release_all"}</code></td><td>진행·대기 중인 동작을 끊고 눌린 모든 버튼·키 즉시 해제</td></tr>
                   </tbody>
                 </table>
               </div>
@@ -333,6 +391,6 @@ requests.post("http://127.0.0.1:18080/action", json={
     </div>
   </div>
 
-  <script src="app.js?v=20261124v6"></script>
+  <script src="app.js?v=20261124v9"></script>
 </body>
 </html>
