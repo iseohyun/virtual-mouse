@@ -22,7 +22,8 @@ from typing import Any
 
 from auth import TOKEN_ENV, load_or_create_token
 from dispatcher import ActionDispatcher, LogBuffer
-from http_api import ExclusiveThreadingHTTPServer, make_handler
+from http_api import ExclusiveThreadingHTTPServer, PUBLIC_DASHBOARD_ORIGIN, make_handler
+from win_integration import get_autostart, register_protocol_handler, set_autostart
 
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 SHUTDOWN_DEADLINE_SEC = 3.0  # 종료가 어떤 이유로든 막혀도 이 시간 안에 프로세스를 끝낸다
@@ -52,6 +53,8 @@ def main() -> None:
     parser.add_argument("--open-guide", action="store_true", help="Open dashboard in browser on startup")
     parser.add_argument("--no-browser", action="store_true", help="Do not open browser on startup")
     parser.add_argument("--no-tray", action="store_true", help="Run without system tray icon (headless/CLI mode)")
+    parser.add_argument("--from-uri", action="store_true", help="Started by virtualmouse:// protocol handler")
+    parser.add_argument("_uri", nargs="?", help=argparse.SUPPRESS)  # 혹시 URI 인수가 따라와도 안전히 무시
     args = parser.parse_args()
 
     logger = LogBuffer()
@@ -60,6 +63,9 @@ def main() -> None:
     try:
         server = ExclusiveThreadingHTTPServer((args.host, args.port), BaseHTTPRequestHandler)
     except OSError as exc:
+        if args.from_uri:
+            # 대시보드의 자동/수동 실행 요청 시 에이전트가 이미 떠 있다면 팝업 없이 조용히 끝낸다
+            sys.exit(0)
         message = (
             f"{args.port} 포트를 열 수 없습니다. VirtualMouse Agent가 이미 실행 중이거나 "
             f"다른 프로그램이 이 포트를 쓰고 있습니다.\n\n({exc})"
@@ -69,9 +75,18 @@ def main() -> None:
             show_error_dialog(message)
         sys.exit(1)
 
+    if not args.no_tray:
+        try:
+            proto = register_protocol_handler()
+            if proto.get("ok"):
+                logger.add("대시보드 자동 실행 프로토콜 등록됨 (virtualmouse://)")
+        except Exception as exc:
+            logger.add(f"URL 프로토콜 등록 건너뜀: {exc}", "WARN")
+
     token = load_or_create_token()
     dispatcher = ActionDispatcher(port=args.com, logger=logger)
-    dashboard_url = guide_url_with_token(args.port, token)
+    local_guide_url = guide_url_with_token(args.port, token)
+    public_dashboard_url = f"{PUBLIC_DASHBOARD_ORIGIN}/"
 
     tray_holder: dict[str, Any] = {"tray": None}
     shutdown_event = threading.Event()
@@ -111,8 +126,12 @@ def main() -> None:
         threading.Thread(target=run, daemon=True).start()
 
     server.RequestHandlerClass = make_handler(dispatcher, request_shutdown, args.port, token=token)
-    port_info = dispatcher.mouse.port if dispatcher.mouse else "대기 중 (자동 감지)"
-    logger.add(f"서버 시작: http://{args.host}:{args.port} (Arduino: {port_info})")
+    if dispatcher.mouse is not None:
+        dev_name = "ESP32 BLE" if getattr(dispatcher.mouse, "device_type", "uno") == "esp32" else "Arduino"
+        dev_info = f"{dev_name}: {dispatcher.mouse.port}"
+    else:
+        dev_info = "장치: 대기 중 (자동 감지)"
+    logger.add(f"서버 시작: http://{args.host}:{args.port} ({dev_info})")
     # 로그는 대시보드에서 복사·공유될 수 있으므로 사용자 이름이 들어간 전체 경로는 남기지 않는다
     token_source = f"환경 변수 {TOKEN_ENV}" if os.environ.get(TOKEN_ENV) else r"%LOCALAPPDATA%\VirtualMouse\api-token"
     logger.add(f"API 토큰: {token_source} (트레이 메뉴 'API 토큰 복사' 또는 'vm token')")
@@ -124,7 +143,17 @@ def main() -> None:
 
     should_open = args.open_guide and not args.no_browser
     if should_open:
-        threading.Timer(0.6, lambda: webbrowser.open(dashboard_url)).start()
+        threading.Timer(0.6, lambda: webbrowser.open(local_guide_url)).start()
+
+    def toggle_autostart(enabled: bool) -> bool:
+        try:
+            res = set_autostart(enabled)
+            state_text = "켜짐" if res.get("autostart_enabled") else "꺼짐"
+            logger.add(f"트레이에서 Windows 시작 시 자동 실행 변경: {state_text}")
+            return bool(res.get("autostart_enabled"))
+        except Exception as exc:
+            logger.add(f"Windows 시작 시 자동 실행 변경 실패: {exc}", "ERROR")
+            return get_autostart()
 
     tray = None
     if not args.no_tray:
@@ -132,10 +161,13 @@ def main() -> None:
             from tray import TrayController
 
             tray = TrayController(
-                dashboard_url=dashboard_url,
+                dashboard_url=public_dashboard_url,
+                local_guide_url=local_guide_url,
                 on_quit=request_shutdown,
                 api_token=token,
                 on_emergency_stop=emergency_stop,
+                get_autostart=get_autostart,
+                on_toggle_autostart=toggle_autostart,
             )
         except Exception as exc:
             logger.add(f"트레이 초기화 실패, 콘솔 모드로 전환: {exc}", "WARN")

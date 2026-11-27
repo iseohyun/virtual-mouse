@@ -165,6 +165,54 @@ class DeviceStateTest(unittest.TestCase):
         self.assertEqual(self._state(stock)["state"], "stock_uno")
         self.assertEqual(self._state([])["state"], "no_device")
 
+    def test_esp32_ble_states(self):
+        cp210x = [
+            {
+                "Name": "Silicon Labs CP210x USB to UART Bridge (COM10)",
+                "DeviceID": "USB\\VID_10C4&PID_EA60\\0001",
+                "Service": "silabser",
+                "Status": "OK",
+            }
+        ]
+        connected = self._state(
+            cp210x,
+            connected_port="COM10",
+            firmware_version="1.0.0",
+            device_type="esp32",
+            ble_state="CONNECTED",
+        )
+        self.assertEqual(connected["state"], "bt_ready")
+        self.assertEqual(connected["device_type"], "esp32")
+        self.assertTrue(connected["bt"]["ble_connected"])
+        self.assertEqual(connected["bt"]["state"], "ble_connected")
+        self.assertEqual(connected["bt"]["usb_bridge"], "CP210x")
+
+        adv = self._state(
+            cp210x,
+            connected_port="COM10",
+            firmware_version="1.0.0",
+            device_type="esp32",
+            ble_state="ADVERTISING",
+        )
+        self.assertEqual(adv["state"], "bt_advertising")
+        self.assertEqual(adv["bt"]["state"], "ble_advertising")
+        self.assertFalse(adv["bt"]["ble_connected"])
+
+        no_fw = self._state(cp210x)
+        self.assertEqual(no_fw["bt"]["state"], "esp32_no_fw")
+        self.assertEqual(no_fw["bt"]["port"], "COM10")
+
+        bad_driver = [{"Name": "CP2102N USB", "DeviceID": "USB\\VID_10C4&PID_EA60\\0001", "Service": None, "Status": "Error"}]
+        self.assertEqual(self._state(bad_driver)["bt"]["state"], "driver_needed")
+
+    def test_esp32_client_version_and_ble_status(self):
+        vm = _client([b"VMOUSE_ESP32 1.0.0\n", b"CONNECTED\n", b"OK\n"])
+        vm.device_type = "uno"
+        self.assertEqual(vm.version(), "1.0.0")
+        self.assertEqual(vm.device_type, "esp32")
+        self.assertEqual(vm.ble_status(), "CONNECTED")
+        self.assertTrue(vm.demo())
+
 
 class UsbScanCacheTest(unittest.TestCase):
     """M5: 장치가 없을 때도 결과를 캐시해 폴링마다 PowerShell 을 띄우지 않는다."""

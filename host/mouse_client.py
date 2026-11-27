@@ -69,29 +69,109 @@ def _validate_keycode(keycode: int) -> int:
     return code
 
 
+ESP32_BRIDGE_HWIDS = (
+    "VID:PID=10C4:EA60",  # Silicon Labs CP210x
+    "VID:PID=1A86:7523",  # WCH CH340
+    "VID:PID=1A86:55D4",  # WCH CH9102
+    "VID:PID=303A:",      # Espressif native USB
+)
+
+
+def _open_serial_no_reset(port: str, baudrate: int, timeout: float) -> serial.Serial:
+    """ESP32 는 DTR/RTS 를 기본값(True)으로 열면 자동 리셋되어 BLE 페어링이 끊긴다. 끄고 연다."""
+    ser = serial.Serial()
+    ser.port = port
+    ser.baudrate = baudrate
+    ser.timeout = timeout
+    ser.dtr = False
+    ser.rts = False
+    ser.open()
+    return ser
+
+
+def _is_esp32_hwid(hwid: str) -> bool:
+    upper = (hwid or "").upper()
+    return any(token in upper for token in ESP32_BRIDGE_HWIDS)
+
+
+def _probe_esp32_firmware(port: str, baudrate: int = 115200, timeout: float = 0.8) -> bool:
+    """CP210x/CH340 포트가 실제 VirtualMouse ESP32 펌웨어인지 리셋 없이 확인한다."""
+    ser: serial.Serial | None = None
+    try:
+        ser = _open_serial_no_reset(port, baudrate=baudrate, timeout=timeout)
+        time.sleep(0.08)
+        ser.reset_input_buffer()
+        ser.write(b"VER\n")
+        ser.flush()
+        resp = ser.readline().decode("ascii", errors="ignore").strip()
+        return resp.startswith("VMOUSE_ESP32 ")
+    except Exception:
+        return False
+    finally:
+        if ser is not None and ser.is_open:
+            try:
+                ser.close()
+            except Exception:
+                pass
+
+
 class VirtualMouse:
-    def __init__(self, port: str | None = None, baudrate: int = 115200, timeout: float = 2.0):
-        self.port = port or self.find_device_port()
+    def __init__(
+        self,
+        port: str | None = None,
+        baudrate: int = 115200,
+        timeout: float = 2.0,
+        device_type: str | None = None,
+    ):
+        if port:
+            self.port = port
+            self.device_type = device_type or self._infer_device_type(port)
+        else:
+            found_port, found_type = self.find_device()
+            self.port = found_port
+            self.device_type = device_type or found_type or "uno"
         if not self.port:
-            raise RuntimeError("VirtualMouse (VID_2341&PID_484C) COM 포트를 찾을 수 없습니다.")
-        self.ser = serial.Serial(self.port, baudrate=baudrate, timeout=timeout)
-        time.sleep(0.3)
+            raise RuntimeError("VirtualMouse 장치(Arduino Uno 또는 ESP32 BLE) COM 포트를 찾을 수 없습니다.")
+        if self.device_type == "esp32":
+            self.ser = _open_serial_no_reset(self.port, baudrate=baudrate, timeout=timeout)
+            time.sleep(0.1)
+        else:
+            self.ser = serial.Serial(self.port, baudrate=baudrate, timeout=timeout)
+            time.sleep(0.3)
         self.ser.reset_input_buffer()
 
     @staticmethod
-    def find_device_port() -> str | None:
-        """VirtualMouse (VID:PID=2341:484C) 시리얼 포트를 자동 탐색합니다."""
+    def _infer_device_type(port: str) -> str:
+        for p in serial.tools.list_ports.comports():
+            if (p.device or "").upper() == port.upper():
+                if _is_esp32_hwid(p.hwid or ""):
+                    return "esp32"
+                return "uno"
+        return "uno"
+
+    @staticmethod
+    def find_device() -> tuple[str | None, str | None]:
+        """연결된 VirtualMouse 장치(Arduino Uno 우선, 없으면 ESP32 BLE)를 자동 탐색한다."""
         ports = list(serial.tools.list_ports.comports())
         for p in ports:
             hwid = (p.hwid or "").upper()
             if "VID:PID=2341:484C" in hwid:
-                return p.device
+                return p.device, "uno"
         for p in ports:
             desc = (p.description or "").lower()
             hwid = (p.hwid or "").upper()
             if "hoodloader" in desc or "VID:PID=03EB:204A" in hwid:
-                return p.device
-        return None
+                return p.device, "uno"
+        for p in ports:
+            if _is_esp32_hwid(p.hwid or "") and _probe_esp32_firmware(p.device):
+                return p.device, "esp32"
+        return None, None
+
+    @staticmethod
+    def find_device_port() -> str | None:
+        """VirtualMouse (Arduino Uno 또는 ESP32 BLE) 시리얼 포트를 자동 탐색합니다."""
+        port, _ = VirtualMouse.find_device()
+        return port
 
     def _send(self, command: str) -> str:
         if "\n" in command or "\r" in command:
@@ -112,9 +192,37 @@ class VirtualMouse:
 
     def version(self) -> str | None:
         resp = self._send("VER")
+        if resp.startswith("VMOUSE_ESP32 "):
+            self.device_type = "esp32"
+            return resp.split(" ", 1)[1].strip()
         if resp.startswith("VMOUSE "):
             return resp.split(" ", 1)[1].strip()
         return None
+
+    def ble_status(self) -> str | None:
+        """ESP32 BLE 연결 상태(CONNECTED / ADVERTISING)를 조회한다."""
+        if getattr(self, "device_type", "uno") != "esp32":
+            return None
+        resp = self._send("BLE").upper()
+        if resp in ("CONNECTED", "ADVERTISING"):
+            return resp
+        return None
+
+    def demo(self) -> bool:
+        """ESP32 BLE 마우스 사각형 이동 데모를 실행한다."""
+        if getattr(self, "device_type", "uno") != "esp32":
+            raise RuntimeError("BT 사각형 데모는 ESP32 BLE 장치에서만 지원됩니다.")
+        resp = self._send("DEMO")
+        if resp == "ERR_NOT_CONNECTED":
+            # 펌웨어가 ERR_NOT_CONNECTED 뒤에 OK 를 한 줄 더 보내므로 버퍼를 비운다
+            try:
+                self.ser.readline()
+            except Exception:
+                pass
+            raise RuntimeError("스마트폰과 블루투스(VirtualMouse BLE)가 연결되어 있지 않습니다. 먼저 페어링해 주세요.")
+        if resp != "OK":
+            raise RuntimeError(f"DEMO 명령 실패: {resp!r}")
+        return True
 
     def enter_bootloader(self) -> bool:
         resp = self._send("BOOT")

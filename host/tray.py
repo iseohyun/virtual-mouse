@@ -90,16 +90,48 @@ class TrayController:
         on_quit: Callable[[], None],
         api_token: str | None = None,
         on_emergency_stop: Callable[[], None] | None = None,
+        local_guide_url: str | None = None,
+        get_autostart: Callable[[], bool] | None = None,
+        on_toggle_autostart: Callable[[bool], bool] | None = None,
     ):
         self.dashboard_url = dashboard_url
+        self.local_guide_url = local_guide_url
         self.on_quit = on_quit
         self.api_token = api_token
         self.on_emergency_stop = on_emergency_stop
+        self.get_autostart = get_autostart
+        self.on_toggle_autostart = on_toggle_autostart
         self._icon: pystray.Icon | None = None
         self._stopped = threading.Event()
 
     def _open_dashboard(self, icon=None, item=None) -> None:
         webbrowser.open(self.dashboard_url)
+
+    def _open_local_guide(self, icon=None, item=None) -> None:
+        if self.local_guide_url:
+            webbrowser.open(self.local_guide_url)
+
+    def _is_autostart_checked(self, item=None) -> bool:
+        if self.get_autostart is None:
+            return False
+        try:
+            return bool(self.get_autostart())
+        except Exception:
+            return False
+
+    def _toggle_autostart(self, icon=None, item=None) -> None:
+        if self.on_toggle_autostart is None:
+            return
+        next_val = not self._is_autostart_checked()
+        ok_state = self.on_toggle_autostart(next_val)
+        if self._icon is not None:
+            try:
+                self._icon.notify(
+                    "Windows 시작 시 자동 실행을 켰습니다." if ok_state else "Windows 시작 시 자동 실행을 껐습니다.",
+                    "VirtualMouse",
+                )
+            except Exception:
+                pass
 
     def _emergency_stop(self, icon=None, item=None) -> None:
         if self.on_emergency_stop is not None:
@@ -133,12 +165,31 @@ class TrayController:
 
     def run(self) -> None:
         image = create_vm_icon_image(64)
-        menu = pystray.Menu(
-            pystray.MenuItem("대시보드 보기", self._open_dashboard, default=True),
-            pystray.MenuItem("비상 정지 (입력 모두 해제)", self._emergency_stop, enabled=self.on_emergency_stop is not None),
-            pystray.MenuItem("API 토큰 복사", self._copy_token, enabled=bool(self.api_token)),
-            pystray.Menu.SEPARATOR,
-            pystray.MenuItem("종료하기", self._quit_clicked),
+        items = [
+            pystray.MenuItem("대시보드 열기 (HTTPS)", self._open_dashboard, default=True),
+        ]
+        if self.local_guide_url:
+            items.append(pystray.MenuItem("로컬 가이드 열기 (자동 로그인)", self._open_local_guide))
+        items.extend(
+            [
+                pystray.MenuItem("비상 정지 (입력 모두 해제)", self._emergency_stop, enabled=self.on_emergency_stop is not None),
+                pystray.MenuItem("API 토큰 복사", self._copy_token, enabled=bool(self.api_token)),
+            ]
         )
+        if self.on_toggle_autostart is not None:
+            items.append(
+                pystray.MenuItem(
+                    "Windows 시작 시 자동 실행",
+                    self._toggle_autostart,
+                    checked=self._is_autostart_checked,
+                )
+            )
+        items.extend(
+            [
+                pystray.Menu.SEPARATOR,
+                pystray.MenuItem("종료하기", self._quit_clicked),
+            ]
+        )
+        menu = pystray.Menu(*items)
         self._icon = pystray.Icon("VirtualMouse", image, "VirtualMouse Agent", menu)
         self._icon.run()

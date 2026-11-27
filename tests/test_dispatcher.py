@@ -375,5 +375,35 @@ class LockScopeTest(unittest.TestCase):
             self.d._update_lock.release()
 
 
+class BtAndAutostartDispatcherTest(unittest.TestCase):
+    def test_bt_demo_and_unsupported_actions_on_esp32(self):
+        d = make_fake_dispatcher(self)
+        with self.assertRaises(ValueError):
+            d.execute_payload({"action": "bt_demo"})
+
+        d.mouse.device_type = "esp32"
+        d.mouse.ble_state = "CONNECTED"
+        res = d.execute_payload({"action": "bt_demo"})
+        self.assertTrue(res["ok"])
+        self.assertIn("DEMO", d.mouse.commands)
+
+        with self.assertRaises(ValueError):
+            d.execute_payload({"action": "move_to", "x": 100, "y": 100})
+        with self.assertRaises(ValueError):
+            d.execute_payload({"action": "type", "text": "hello"})
+
+    def test_set_autostart_delegates_to_win_integration(self):
+        d = make_fake_dispatcher(self)
+        seen = []
+        with mock.patch.object(
+            dispatcher_mod,
+            "win_set_autostart",
+            lambda enabled: (seen.append(enabled), {"ok": True, "autostart_enabled": enabled})[1],
+        ):
+            res = d.set_autostart(True)
+        self.assertTrue(res["autostart_enabled"])
+        self.assertEqual(seen, [True])
+
+
 if __name__ == "__main__":
     unittest.main()

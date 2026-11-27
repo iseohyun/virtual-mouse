@@ -1,8 +1,8 @@
 {
   "id": "/",
-  "name": "Virtual Mouse — Hardware HID Dashboard",
+  "name": "Virtual Mouse — PC & Bluetooth HID Dashboard",
   "short_name": "Virtual Mouse",
-  "description": "Arduino Uno R3 물리 USB HID 마우스·키보드 설치 및 제어 대시보드",
+  "description": "Arduino Uno R3(PC USB HID) 및 ESP32(모바일 Bluetooth BLE HID) 물리 마우스·키보드 설치 및 제어 대시보드",
   "lang": "ko",
   "start_url": "/",
   "scope": "/",

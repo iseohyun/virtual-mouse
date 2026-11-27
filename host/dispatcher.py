@@ -21,7 +21,7 @@ import sys
 import threading
 from typing import Any, Dict
 
-from device_status import EXPECTED_FW_VERSION, detect_device_state
+from device_status import EXPECTED_BT_FW_VERSION, EXPECTED_FW_VERSION, detect_device_state
 from driver_install import install_dfu_winusb_driver
 from driver_install import is_available as driver_installer_available
 from human_motion import ActionAborted, HumanMouseController, enable_dpi_awareness, get_cursor_pos_safe
@@ -34,6 +34,11 @@ from updater import (
     find_local_hex,
     flash_hex_via_dfu,
     wait_for_dfu_ready,
+)
+from win_integration import (
+    get_autostart as win_get_autostart,
+    is_protocol_registered as win_is_protocol_registered,
+    set_autostart as win_set_autostart,
 )
 
 __all__ = [
@@ -140,6 +145,7 @@ class ActionDispatcher:
         enable_dpi_awareness()
         self.preferred_port = port
         self.expected_version = expected_version
+        self.expected_bt_version = EXPECTED_BT_FW_VERSION
         self.logger = logger or LogBuffer()
         self.mouse: VirtualMouse | None = None
         self.human: HumanMouseController | None = None
@@ -202,7 +208,8 @@ class ActionDispatcher:
                 self.mouse = vm
                 self.human = HumanMouseController(vm, abort_event=self._abort)
                 self._last_connect_error = None
-                self.logger.add(f"Arduino 연결됨 ({vm.port})")
+                label = "ESP32 BLE" if getattr(vm, "device_type", "uno") == "esp32" else "Arduino"
+                self.logger.add(f"{label} 연결됨 ({vm.port})")
                 return True
             self._note_connect_error("PING 응답 없음")
         except Exception as exc:
@@ -270,6 +277,13 @@ class ActionDispatcher:
         snapshot.update({"busy": True, "paused": self.paused, "running": not self.paused, "cursor": self._cursor_dict()})
         return snapshot
 
+    def set_autostart(self, enabled: bool) -> Dict[str, Any]:
+        """Windows 로그인 시 에이전트 자동 실행(HKCU\\...\\Run)을 켜거나 끈다."""
+        result = win_set_autostart(bool(enabled))
+        state_text = "켜짐" if result.get("autostart_enabled") else "꺼짐"
+        self.logger.add(f"Windows 시작 시 자동 실행 설정 변경: {state_text}")
+        return result
+
     def health(self) -> Dict[str, Any]:
         if not self._lock.acquire(timeout=STATUS_LOCK_WAIT_SEC):
             snapshot = self._busy_snapshot()
@@ -279,18 +293,27 @@ class ActionDispatcher:
                 "paused": snapshot["paused"],
                 "running": snapshot["running"],
                 "port": snapshot.get("port"),
+                "device_type": snapshot.get("device_type"),
                 "firmware_version": snapshot.get("firmware_version"),
                 "cursor": snapshot["cursor"],
             }
         try:
             connected = self._try_connect()
             ver = self.mouse.version() if connected and self.mouse else None
+            dev_type = getattr(self.mouse, "device_type", "uno") if connected and self.mouse else None
+            ble_state = (
+                self.mouse.ble_status()
+                if connected and self.mouse and dev_type == "esp32" and hasattr(self.mouse, "ble_status")
+                else None
+            )
             return {
                 "ok": connected,
                 "busy": False,
                 "paused": self.paused,
                 "running": not self.paused,
                 "port": self.mouse.port if connected and self.mouse else None,
+                "device_type": dev_type,
+                "ble_state": ble_state,
                 "firmware_version": ver,
                 "cursor": self._cursor_dict(),
             }
@@ -305,8 +328,15 @@ class ActionDispatcher:
             connected = self._try_connect()
             port = self.mouse.port if connected and self.mouse else None
             ver = self.mouse.version() if connected and self.mouse else None
+            dev_type = getattr(self.mouse, "device_type", "uno") if connected and self.mouse else None
+            ble_state = (
+                self.mouse.ble_status()
+                if connected and self.mouse and dev_type == "esp32" and hasattr(self.mouse, "ble_status")
+                else None
+            )
             paused = self.paused
             expected = self.expected_version
+            expected_bt = self.expected_bt_version
             connect_error = None if connected else self._last_connect_error
         finally:
             self._lock.release()
@@ -316,6 +346,9 @@ class ActionDispatcher:
             firmware_version=ver,
             expected_version=expected,
             paused=paused,
+            device_type=dev_type,
+            ble_state=ble_state,
+            expected_bt_version=expected_bt,
         )
         info["paused"] = paused
         info["running"] = not paused
@@ -324,6 +357,8 @@ class ActionDispatcher:
         # 대시보드가 [드라이버 자동 설치] 버튼을 보일지·잠글지 정한다 (조회만 하고 설치는 하지 않는다)
         info["driver_installer"] = driver_installer_available()
         info["driver_installing"] = self._update_kind == "driver"
+        info["autostart_enabled"] = win_get_autostart()
+        info["protocol_registered"] = win_is_protocol_registered()
         self._last_status = dict(info)
         info["cursor"] = self._cursor_dict()
         return info
@@ -503,7 +538,22 @@ class ActionDispatcher:
             return {"action": "cursor", "cursor": self._cursor_dict()}
 
         mouse, human_ctrl = self._require_connected()
+        dev_type = getattr(mouse, "device_type", "uno")
         self.logger.add(f"ACTION: {json.dumps(redact_action_for_log(cmd), ensure_ascii=False)}")
+
+        if action == "bt_demo":
+            if dev_type != "esp32":
+                raise ValueError("bt_demo 액션은 ESP32 BLE 장치 연결 시에만 사용할 수 있습니다.")
+            mouse.demo()
+            return {"action": "bt_demo"}
+
+        if dev_type == "esp32" and action in ("move_to", "click_at", "drag"):
+            raise ValueError(
+                "BT(ESP32) 모드에서는 스마트폰 화면 좌표를 직접 알 수 없으므로 "
+                "상대 이동(move)·클릭(click)·스크롤(scroll)을 사용해 주세요."
+            )
+        if dev_type == "esp32" and action in ("type", "hotkey", "key_tap", "key_press", "key_release", "key_release_all"):
+            raise ValueError("현재 ESP32 BLE 펌웨어(v1.0.0)는 마우스 입력만 지원합니다.")
 
         # --- Mouse actions ---
         if action == "move":

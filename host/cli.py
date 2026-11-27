@@ -158,6 +158,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_raw = sub.add_parser("action", help="원본 JSON({}) 액션을 그대로 전송")
     p_raw.add_argument("json_payload", help='JSON 문자열 (예: \'{"action":"scroll","delta":-3}\')')
 
+    sub.add_parser("bt-demo", help="ESP32 BLE 마우스 사각형 이동 데모 실행")
+    p_auto = sub.add_parser("autostart", help="Windows 시작 시 자동 실행 켜기/끄기")
+    p_auto.add_argument("state", choices=["on", "off"], help="on 또는 off")
     sub.add_parser("release-all", help="눌린 모든 마우스 버튼·키보드 키 비상 해제")
     sub.add_parser("pause", help="로컬 제어 서비스 일시 중지")
     sub.add_parser("resume", help="로컬 제어 서비스 재개")
@@ -227,6 +230,10 @@ def main() -> None:
     elif cmd == "action":
         # 임의 JSON 은 연속 동작(actions)이 길 수 있으므로 넉넉히 기다린다
         _print_json(call("POST", "/action", json.loads(args.json_payload), timeout=600.0))
+    elif cmd == "bt-demo":
+        _print_json(call("POST", "/action", {"action": "bt_demo"}))
+    elif cmd == "autostart":
+        _print_json(call("POST", "/control/autostart", {"enabled": args.state == "on"}))
     elif cmd == "release-all":
         _print_json(call("POST", "/action", {"action": "release_all"}))
     elif cmd == "pause":

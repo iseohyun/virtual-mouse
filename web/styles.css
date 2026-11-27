@@ -79,10 +79,91 @@ body {
   color: var(--muted);
 }
 
-.nav-list {
+.nav-groups {
   display: flex;
   flex-direction: column;
+  gap: 10px;
+}
+
+.nav-group {
+  border: 1px solid #1e293b;
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.55);
+  overflow: hidden;
+}
+
+.nav-group-toggle {
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: #e2e8f0;
+  padding: 10px 12px;
+  font-size: 0.9rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s ease;
+}
+
+.nav-group-toggle:hover {
+  background: rgba(56, 189, 248, 0.08);
+}
+
+.group-caret {
+  color: var(--primary);
+  font-size: 0.85rem;
+  width: 14px;
+  text-align: center;
+  transition: transform 0.15s ease;
+}
+
+.nav-group:not(.open) .group-caret {
+  transform: rotate(-90deg);
+}
+
+.group-label {
+  flex: 1;
+  display: flex;
+  align-items: baseline;
   gap: 6px;
+}
+
+.group-label small {
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.group-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #475569;
+  flex-shrink: 0;
+}
+
+.group-dot.ok {
+  background: var(--ok);
+  box-shadow: 0 0 8px rgba(34, 197, 94, 0.7);
+}
+
+.group-dot.warn {
+  background: var(--warn);
+  box-shadow: 0 0 8px rgba(245, 158, 11, 0.6);
+}
+
+.nav-sublist {
+  display: none;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 8px 8px;
+}
+
+.nav-group.open .nav-sublist {
+  display: flex;
 }
 
 .nav-item {
@@ -90,13 +171,13 @@ body {
   border: 1px solid transparent;
   background: transparent;
   color: #cbd5e1;
-  border-radius: 10px;
-  padding: 10px 12px;
-  font-size: 0.92rem;
+  border-radius: 8px;
+  padding: 8px 10px 8px 18px;
+  font-size: 0.88rem;
   font-weight: 600;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 9px;
   cursor: pointer;
   text-align: left;
   transition: background 0.15s ease, border-color 0.15s ease;
@@ -114,7 +195,7 @@ body {
 
 .nav-icon {
   color: var(--primary);
-  font-size: 0.95rem;
+  font-size: 0.9rem;
 }
 
 .sidebar-status {
@@ -484,6 +565,7 @@ body {
 .btn.primary {
   background: var(--primary);
   color: #082f49;
+  border: 1px solid transparent;
 }
 
 .btn.primary:hover:not(:disabled) {
@@ -662,6 +744,167 @@ body {
 .api-table th {
   color: #7dd3fc;
   background: rgba(15, 23, 42, 0.7);
+}
+
+/* Global Banners (Offline Launch, Token, PWA) */
+.banner-card {
+  margin-bottom: 16px;
+  padding: 16px 18px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: rgba(17, 24, 39, 0.92);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.banner-card.warn {
+  border-color: rgba(245, 158, 11, 0.55);
+  background: rgba(30, 27, 16, 0.85);
+}
+
+.banner-card.info {
+  border-color: rgba(56, 189, 248, 0.55);
+  background: rgba(12, 28, 48, 0.85);
+}
+
+.banner-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.check-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  color: #e2e8f0;
+  cursor: pointer;
+  user-select: none;
+}
+
+.check-inline input {
+  accent-color: var(--primary);
+  width: 15px;
+  height: 15px;
+}
+
+/* BT OS Pairing Guide & Live Test Controls */
+.os-guide-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.os-guide-box {
+  background: rgba(15, 23, 42, 0.75);
+  border: 1px solid #1e293b;
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+
+.os-guide-box h3 {
+  margin: 0 0 6px;
+  font-size: 0.92rem;
+  color: #7dd3fc;
+}
+
+.step-select-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.84rem;
+  color: var(--muted);
+  margin-left: auto;
+}
+
+.select-input {
+  background: #091326;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 0.84rem;
+}
+
+.bt-control-grid {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: 14px;
+  align-items: stretch;
+}
+
+.dpad-box {
+  background: #091326;
+  border: 1px solid #1e293b;
+  border-radius: 12px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.dpad-title {
+  font-size: 0.8rem;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.dpad-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 52px);
+  grid-template-rows: repeat(3, 46px);
+  gap: 6px;
+}
+
+.dpad-btn {
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.92rem;
+}
+
+.trackpad {
+  min-height: 196px;
+  border-radius: 12px;
+  border: 1px dashed #475569;
+  background: repeating-linear-gradient(
+    -45deg,
+    #0c162b,
+    #0c162b 14px,
+    #11203d 14px,
+    #11203d 28px
+  );
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  text-align: center;
+  cursor: crosshair;
+  touch-action: none;
+  user-select: none;
+}
+
+.trackpad.active {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.25);
+}
+
+.trackpad-hint {
+  font-size: 0.86rem;
+  color: var(--muted);
+  pointer-events: none;
+}
+
+@media (max-width: 720px) {
+  .bt-control-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .hidden {

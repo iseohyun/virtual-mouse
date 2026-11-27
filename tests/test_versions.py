@@ -29,6 +29,12 @@ class FirmwareVersionTest(unittest.TestCase):
         self.assertEqual(fw, device_status.EXPECTED_FW_VERSION)
         self.assertIn(f"VMOUSE {fw}", ino, "프로토콜 주석의 VER 응답도 같은 버전이어야 합니다")
 
+    def test_esp32_ino_matches_expected_bt_version(self):
+        ino = read("firmware/esp32_ble_mouse/esp32_ble_mouse.ino")
+        fw = find(r'#define\s+FW_VERSION\s+"([0-9]+\.[0-9]+\.[0-9]+)"', ino, "ESP32 FW_VERSION")
+        self.assertEqual(fw, device_status.EXPECTED_BT_FW_VERSION)
+        self.assertIn(f"VMOUSE_ESP32 {fw}", ino)
+
 
 class WebVersionTest(unittest.TestCase):
     def test_build_tag_and_version_label_agree(self):

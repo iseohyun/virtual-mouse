@@ -97,6 +97,14 @@ class CliTest(unittest.TestCase):
         )
         self.assertGreater(timeout, agent_wait)
 
+    def test_autostart_and_bt_demo_commands(self):
+        calls, _ = self.run_cli("--token", TEST_TOKEN, "autostart", "on")
+        self.assertEqual(calls[0][1:4], ("POST", "/control/autostart", {"enabled": True}))
+        calls, _ = self.run_cli("--token", TEST_TOKEN, "autostart", "off")
+        self.assertEqual(calls[0][1:4], ("POST", "/control/autostart", {"enabled": False}))
+        calls, _ = self.run_cli("--token", TEST_TOKEN, "bt-demo")
+        self.assertEqual(calls[0][1:4], ("POST", "/action", {"action": "bt_demo"}))
+
 
 if __name__ == "__main__":
     unittest.main()

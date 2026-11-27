@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/lang/ko/).
 
+## [1.4.0] - 2026-11-27
+### Added
+- 대시보드에서 로컬 에이전트를 자동·수동 실행하는 `virtualmouse://` 커스텀 프로토콜 등록 (`host/win_integration.py`, HKCU 전용·UAC 불필요, `--from-uri` 중복 실행 시 무팝업 종료)
+- Windows 로그인 시 에이전트 자동 실행(`HKCU\...\Run`) 1클릭 토글 (`POST /control/autostart`, 트레이 메뉴, 대시보드 로그 탭, `vm autostart on|off`, 기본값 꺼짐)
+- 좌측 패널 **PC(유선 USB) / BT(모바일 BLE)** 아코디언 메뉴 구조(각각 설치·테스트·로그·안내) 및 실시간 장치 상태 표시
+- ESP32 BLE HID 마우스 펌웨어(`firmware/esp32_ble_mouse/esp32_ble_mouse.ino`, v1.0.0) 및 에이전트 자동 감지·제어 통합(DTR/RTS 리셋 방지, `bt_demo` 사각형 데모, BT 페어링 단계별 가이드·트랙패드 테스트)
+- PWA 오프라인 셸 캐시 폴백(`web/sw.js`) 및 브라우저 앱 설치 버튼(`beforeinstallprompt`)
+- 단위 테스트 12건 추가 (프로토콜·자동 실행·`/control/autostart` 보안·ESP32 BT 상태/디스패처/CLI)
+### Changed
+- 트레이 기본 메뉴를 `대시보드 열기 (HTTPS)`(`https://virtual-mouse.iseohyun.com/`)로 변경하고 `로컬 가이드 열기 (자동 로그인)`를 보조 메뉴로 분리
+- 공개 도메인(`virtual-mouse.iseohyun.com`)의 `http://` 진입 시 자동 `https://` 승격 가드 추가
+### Security
+- `virtualmouse://` 프로토콜 명령에 `%1` 외부 URI 인수를 전달하지 않아 웹사이트를 통한 명령줄 인수 주입 원천 차단
+- `POST /control/autostart`에 기존 출처·호스트·JSON·Bearer 토큰 검사 동일 적용
+
 ## [1.3.0] - 2026-11-24
 ### Added
 - WinUSB 드라이버 자동 설치: DFU 장치(`03EB:2FEF`)에 WinUSB 드라이버가 없을 때 대시보드 1단계 [드라이버 자동 설치], `vm driver-install`, `POST /driver/install` (UAC 확인 창에서 승인해야 진행, 요청할 때만 실행)

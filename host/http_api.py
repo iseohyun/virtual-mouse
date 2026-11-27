@@ -296,6 +296,11 @@ def make_handler(
                 if path == "/control/resume":
                     self._send_json(200, dispatcher.resume())
                     return
+                if path == "/control/autostart":
+                    if "enabled" not in payload or not isinstance(payload["enabled"], bool):
+                        raise ValueError("'enabled' must be a boolean (true or false)")
+                    self._send_json(200, dispatcher.set_autostart(payload["enabled"]))
+                    return
                 if path == "/control/quit":
                     dispatcher.logger.add("대시보드에서 종료 요청 수신", "WARN")
                     self._send_json(200, {"ok": True, "quitting": True})

@@ -6,8 +6,8 @@
   <!-- 이 페이지의 스크립트·스타일은 자기 출처 파일만, 통신은 자기 출처와 로컬 에이전트(18080)만 허용 -->
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' http://127.0.0.1:18080 http://localhost:18080; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'" />
-  <title>Virtual Mouse - Arduino USB HID 마우스 &amp; 키보드 대시보드 | iseohyun</title>
-  <meta name="description" content="Arduino Uno R3 기반 물리 USB HID 마우스·키보드 설치 가이드, 라이브 테스트, 구동/로그 제어, 외부 JSON API 안내 대시보드." />
+  <title>Virtual Mouse — PC(USB) &amp; BT(Bluetooth) 물리 마우스 대시보드 | iseohyun</title>
+  <meta name="description" content="Arduino Uno R3(PC 유선 USB HID) 및 ESP32(스마트폰 무선 Bluetooth BLE HID) 물리 마우스·키보드 설치, 테스트, 로그 제어 및 JSON API 대시보드." />
   <link rel="canonical" href="https://virtual-mouse.iseohyun.com/" />
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" href="icon.svg" type="image/svg+xml" />
@@ -16,12 +16,12 @@
 
   <meta property="og:type" content="website" />
   <meta property="og:url" content="https://virtual-mouse.iseohyun.com/" />
-  <meta property="og:title" content="Virtual Mouse — Arduino USB HID Mouse &amp; Keyboard" />
-  <meta property="og:description" content="Arduino Uno R3 물리 USB HID 마우스·키보드 대시보드 및 로컬 JSON API" />
+  <meta property="og:title" content="Virtual Mouse — PC(USB) &amp; BT(Bluetooth) Hardware HID" />
+  <meta property="og:description" content="Arduino Uno R3 및 ESP32 BLE 물리 HID 마우스·키보드 대시보드 및 로컬 JSON API" />
   <meta property="og:locale" content="ko_KR" />
   <meta name="twitter:card" content="summary" />
 
-  <link rel="stylesheet" href="styles.css?v=20261124v12" />
+  <link rel="stylesheet" href="styles.css?v=20261127v2" />
 </head>
 <body>
   <div class="app-shell">
@@ -31,33 +31,72 @@
         <span class="vm-logo">VM</span>
         <div>
           <div class="brand-title">Virtual Mouse</div>
-          <div class="brand-sub">Hardware HID Agent</div>
+          <div class="brand-sub">PC USB · BT BLE HID</div>
         </div>
       </div>
 
-      <nav class="nav-list" aria-label="대시보드 메뉴">
-        <button class="nav-item active" data-tab="install" type="button">
-          <span class="nav-icon">①</span>
-          <span>설치하기</span>
-        </button>
-        <button class="nav-item" data-tab="test" type="button">
-          <span class="nav-icon">②</span>
-          <span>테스트</span>
-        </button>
-        <button class="nav-item" data-tab="logs" type="button">
-          <span class="nav-icon">③</span>
-          <span>로그 · 구동</span>
-        </button>
-        <button class="nav-item" data-tab="guide" type="button">
-          <span class="nav-icon">④</span>
-          <span>안내 (API)</span>
-        </button>
+      <nav class="nav-groups" aria-label="대시보드 메뉴">
+        <!-- PC Accordion Group -->
+        <div class="nav-group open" data-group="pc">
+          <button class="nav-group-toggle" type="button" data-group-toggle="pc" aria-expanded="true">
+            <span class="group-caret" aria-hidden="true">▾</span>
+            <span class="group-label">PC <small>유선 USB</small></span>
+            <span id="pcGroupDot" class="group-dot" title="PC 장치 상태"></span>
+          </button>
+          <div class="nav-sublist">
+            <button class="nav-item active" data-tab="pc-install" type="button">
+              <span class="nav-icon">①</span>
+              <span>설치</span>
+            </button>
+            <button class="nav-item" data-tab="pc-test" type="button">
+              <span class="nav-icon">②</span>
+              <span>테스트</span>
+            </button>
+            <button class="nav-item" data-tab="pc-logs" type="button">
+              <span class="nav-icon">③</span>
+              <span>로그</span>
+            </button>
+            <button class="nav-item" data-tab="pc-guide" type="button">
+              <span class="nav-icon">④</span>
+              <span>안내</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- BT Accordion Group -->
+        <div class="nav-group open" data-group="bt">
+          <button class="nav-group-toggle" type="button" data-group-toggle="bt" aria-expanded="true">
+            <span class="group-caret" aria-hidden="true">▾</span>
+            <span class="group-label">BT <small>모바일 BLE</small></span>
+            <span id="btGroupDot" class="group-dot" title="BT 장치 상태"></span>
+          </button>
+          <div class="nav-sublist">
+            <button class="nav-item" data-tab="bt-install" type="button">
+              <span class="nav-icon">①</span>
+              <span>설치</span>
+            </button>
+            <button class="nav-item" data-tab="bt-test" type="button">
+              <span class="nav-icon">②</span>
+              <span>테스트</span>
+            </button>
+            <button class="nav-item" data-tab="bt-logs" type="button">
+              <span class="nav-icon">③</span>
+              <span>로그</span>
+            </button>
+            <button class="nav-item" data-tab="bt-guide" type="button">
+              <span class="nav-icon">④</span>
+              <span>안내</span>
+            </button>
+          </div>
+        </div>
       </nav>
 
       <div class="sidebar-status">
         <div id="agentBadge" class="pill offline">로컬 서버 확인 중...</div>
-        <div id="fwBadge" class="pill muted">펌웨어: -</div>
+        <div id="fwBadge" class="pill muted">장치: -</div>
         <div id="runBadge" class="pill muted">구동: -</div>
+        <button id="btnSidebarLaunch" class="btn primary btn-block hidden" type="button">로컬 서버 실행</button>
+        <button id="btnInstallPwaSidebar" class="btn secondary btn-block hidden" type="button">PC에 앱 설치 (PWA)</button>
         <button id="btnEmergencyStop" class="btn danger btn-block" type="button" disabled
                 title="진행 중·대기 중인 마우스·키보드 동작을 끊고 눌린 버튼·키를 모두 해제합니다">비상 정지</button>
         <p id="sidebarMsg" class="inline-msg" aria-live="polite"></p>
@@ -69,7 +108,7 @@
           ·
           <a href="https://github.com/iseohyun/virtual-mouse/blob/main/THIRD_PARTY_NOTICES.md" target="_blank" rel="noopener">라이선스</a>
         </div>
-        <div id="swVersionLabel" class="sw-version">SW v1.3.0 · 20261124v12</div>
+        <div id="swVersionLabel" class="sw-version">SW v1.4.0 · 20261127v2</div>
       </div>
     </aside>
 
@@ -77,18 +116,80 @@
     <div class="main-area">
       <header class="topbar">
         <button id="btnToggleDrawer" class="btn-icon" type="button" aria-label="메뉴 열기/닫기">☰</button>
-        <h1 id="pageTitle">설치하기</h1>
+        <h1 id="pageTitle">PC · 설치</h1>
+        <span id="pwaModeBadge" class="mini-pill hidden">앱 모드 (PWA)</span>
         <span class="topbar-url"><code>http://127.0.0.1:18080</code></span>
       </header>
 
       <main class="content">
-        <!-- TAB 1: 설치하기 (1단계 / 2단계 / 3단계) -->
-        <section id="tab-install" class="tab-panel active">
+        <!-- Global Server-Offline Launch Banner (항상 모든 탭 상단에 표시 가능) -->
+        <section id="offlineBanner" class="banner-card warn hidden" aria-live="polite">
+          <div class="banner-head">
+            <strong>로컬 서버(VirtualMouse-Agent)가 실행 중이 아닙니다</strong>
+            <span class="status-tag warn">오프라인</span>
+          </div>
+          <p id="offlineBannerDesc" class="desc">
+            이 대시보드는 서버가 꺼져 있어도 열립니다. 이미 에이전트를 설치했다면 아래 <strong>[로컬 서버 실행]</strong>을 눌러 바로 기동하세요.
+          </p>
+          <div class="actions-row">
+            <button id="btnLaunchAgentTop" class="btn primary" type="button">로컬 서버 실행</button>
+            <a class="btn secondary link-btn"
+               href="https://github.com/iseohyun/virtual-mouse/releases/latest/download/VirtualMouse-Agent.exe"
+               target="_blank" rel="noopener">VirtualMouse-Agent.exe 다운로드</a>
+            <label class="check-inline">
+              <input id="chkAutoLaunch" type="checkbox" checked />
+              <span>대시보드 열 때 서버 자동 실행</span>
+            </label>
+          </div>
+          <p id="launchStatusMsg" class="inline-msg" aria-live="polite"></p>
+          <p class="hint-note">
+            최초 1회 브라우저에서 <strong>「VirtualMouse Agent 열기」</strong> 확인 창이 뜨면 <strong>항상 허용</strong>을 체크해 주세요.
+            이후 대시보드를 열면 자동으로 로컬 서버가 실행됩니다.
+          </p>
+        </section>
+
+        <!-- Global API Token Banner (모든 탭에서 토큰 입력 가능) -->
+        <section id="tokenBanner" class="banner-card warn hidden" aria-live="polite">
+          <div class="banner-head">
+            <strong>로컬 에이전트 API 토큰 입력 필요</strong>
+            <span class="status-tag warn">인증 대기</span>
+          </div>
+          <p class="desc">
+            작업 표시줄의 <strong>VM</strong> 트레이 아이콘을 우클릭해 <strong>API 토큰 복사</strong>를 누른 뒤 아래에 붙여 넣으세요.
+            한 번 저장하면 이 브라우저(및 설치한 PWA 앱)에서 계속 자동 연결됩니다.
+          </p>
+          <div class="token-row">
+            <input id="tokenInput" type="password" autocomplete="off" spellcheck="false"
+                   placeholder="API 토큰 붙여 넣기" aria-label="API 토큰" />
+            <button id="btnSaveToken" class="btn primary" type="button">저장</button>
+            <button id="btnClearToken" class="btn secondary" type="button">지우기</button>
+          </div>
+          <p id="tokenMsg" class="inline-msg" aria-live="polite"></p>
+        </section>
+
+        <!-- Global PWA Install Banner (브라우저 접속 시 앱 설치 안내) -->
+        <section id="pwaBanner" class="banner-card info hidden">
+          <div class="banner-head">
+            <strong>PC에 대시보드 앱(PWA) 설치하기</strong>
+            <span class="status-tag">권장</span>
+          </div>
+          <p class="desc">
+            브라우저의 앱 설치 기능을 사용하면 바탕화면·시작 메뉴에 독립 앱으로 등록되며,
+            로컬 서버가 꺼져 있어도 즉시 실행되어 자동으로 로컬 서버를 기동합니다.
+          </p>
+          <div class="actions-row">
+            <button id="btnInstallPwaBanner" class="btn primary" type="button">지금 PC에 설치</button>
+            <button id="btnDismissPwaBanner" class="btn secondary" type="button">나중에</button>
+          </div>
+        </section>
+
+        <!-- ==================== PC · TAB 1: 설치 ==================== -->
+        <section id="tab-pc-install" class="tab-panel active">
           <div class="steps-grid">
             <!-- Step 1 -->
             <article id="step1Card" class="card">
               <div class="card-header">
-                <span class="step-num">1단계</span>
+                <span class="step-num">PC 1단계</span>
                 <h2>DFU 모드 진입 &amp; 펌웨어 설치</h2>
                 <span id="step1Status" class="status-tag">대기</span>
               </div>
@@ -159,7 +260,7 @@
             <!-- Step 2 -->
             <article id="step2Card" class="card">
               <div class="card-header">
-                <span class="step-num">2단계</span>
+                <span class="step-num">PC 2단계</span>
                 <h2>USB 재연결 &amp; 장치 확인</h2>
                 <span id="step2Status" class="status-tag">대기</span>
               </div>
@@ -177,44 +278,38 @@
             <!-- Step 3 -->
             <article id="step3Card" class="card full-width">
               <div class="card-header">
-                <span class="step-num">3단계</span>
-                <h2>로컬 에이전트(트레이 서버) 설치 및 연결</h2>
+                <span class="step-num">PC 3단계</span>
+                <h2>로컬 에이전트(트레이 서버) 설치 및 자동 실행</h2>
                 <span id="step3Status" class="status-tag">확인 중</span>
               </div>
               <p id="step3Desc" class="desc">
-                <code>VirtualMouse-Agent.exe</code>를 실행하면 CMD 창 없이 작업 표시줄 트레이(<strong>VM</strong> 아이콘)로 상주하며
-                <code>http://127.0.0.1:18080</code> API 서버가 자동 활성화됩니다.
+                <code>VirtualMouse-Agent.exe</code>를 한 번 실행하면 <code>virtualmouse://</code> 자동 실행 프로토콜이 등록되고,
+                작업 표시줄 트레이(<strong>VM</strong> 아이콘)로 상주하며 <code>http://127.0.0.1:18080</code> API 서버가 열립니다.
               </p>
+              <div class="device-pills">
+                <span id="pillProtocol" class="mini-pill">자동 실행 프로토콜: -</span>
+                <span id="pillAutostart" class="mini-pill">Windows 시작 자동 실행: -</span>
+              </div>
               <div id="agentInstallHint" class="hint-box hidden">
-                로컬 에이전트가 아직 실행되지 않았습니다. 아래에서 <code>VirtualMouse-Agent.exe</code>를 다운로드해 실행해 주세요.
+                로컬 에이전트가 실행 중이 아닙니다. 이미 설치했다면 바로 실행하고, 처음이라면 다운로드해 한 번 실행해 주세요.
                 <div class="actions-row spaced-top">
-                  <a class="btn primary link-btn"
+                  <button id="btnLaunchAgentStep3" class="btn primary" type="button">로컬 서버 실행</button>
+                  <a class="btn secondary link-btn"
                      href="https://github.com/iseohyun/virtual-mouse/releases/latest/download/VirtualMouse-Agent.exe"
                      target="_blank" rel="noopener">VirtualMouse-Agent.exe 다운로드</a>
                 </div>
-              </div>
-              <div id="tokenBox" class="hint-box hidden">
-                로컬 에이전트가 <strong>API 토큰</strong>을 요구합니다. 작업 표시줄의 <strong>VM</strong> 트레이 아이콘을 우클릭해
-                <strong>API 토큰 복사</strong>를 누른 뒤 아래에 붙여 넣으세요. 트레이의 <strong>대시보드 보기</strong>로 열면 자동으로 입력됩니다.
-                <div class="token-row">
-                  <input id="tokenInput" type="password" autocomplete="off" spellcheck="false"
-                         placeholder="API 토큰 붙여 넣기" aria-label="API 토큰" />
-                  <button id="btnSaveToken" class="btn primary" type="button">저장</button>
-                  <button id="btnClearToken" class="btn secondary" type="button">지우기</button>
-                </div>
-                <p id="tokenMsg" class="inline-msg" aria-live="polite"></p>
               </div>
             </article>
           </div>
         </section>
 
-        <!-- TAB 2: 테스트 (마우스 자동 클릭 + 키보드 복합 시나리오) -->
-        <section id="tab-test" class="tab-panel">
+        <!-- ==================== PC · TAB 2: 테스트 ==================== -->
+        <section id="tab-pc-test" class="tab-panel">
           <div class="steps-grid">
             <!-- Mouse Test -->
             <article id="step4Card" class="card full-width">
               <div class="card-header">
-                <span class="step-num">마우스 테스트</span>
+                <span class="step-num">PC 마우스</span>
                 <h2>라이브 자동 클릭 테스트 (실시간 캘리브레이션)</h2>
                 <span id="step4Status" class="status-tag">준비 대기</span>
               </div>
@@ -238,7 +333,7 @@
             <!-- Keyboard Scenario Test -->
             <article class="card full-width">
               <div class="card-header">
-                <span class="step-num">키보드 테스트</span>
+                <span class="step-num">PC 키보드</span>
                 <h2>키보드 복합 시나리오 테스트</h2>
                 <span id="kbdStatus" class="status-tag">대기</span>
               </div>
@@ -265,40 +360,13 @@
           </div>
         </section>
 
-        <!-- TAB 3: 로그 · 구동 (시작/중지, 종료 + 실시간 서버 로그) -->
-        <section id="tab-logs" class="tab-panel">
-          <article class="card full-width">
-            <div class="card-header">
-              <span class="step-num">구동 제어</span>
-              <h2>로컬 서버 상태 제어 및 실시간 로그</h2>
-              <span id="runtimeStatusTag" class="status-tag">확인 중</span>
-            </div>
-            <p class="desc">
-              CMD 콘솔 창 없이 이 화면에서 로컬 서버의 <strong>시작/중지</strong>, <strong>트레이 에이전트 완전 종료</strong>,
-              그리고 실시간 서버 로그를 직접 확인할 수 있습니다.
-            </p>
-
-            <div class="actions-row">
-              <button id="btnToggleRun" class="btn primary" type="button" disabled>일시 중지</button>
-              <button id="btnQuitAgent" class="btn danger" type="button" disabled>에이전트 종료</button>
-              <button id="btnRefreshLogs" class="btn secondary" type="button">로그 새로고침</button>
-              <button id="btnClearServerLogs" class="btn secondary" type="button">로그 비우기</button>
-              <button id="btnCopyServerLogs" class="btn secondary" type="button">서버 로그 복사</button>
-              <button id="btnForgetToken" class="btn secondary" type="button">저장된 토큰 지우기</button>
-            </div>
-            <p id="runtimeMsg" class="inline-msg" aria-live="polite"></p>
-
-            <pre id="serverLogBox" class="log-box tall">서버 로그를 불러오는 중...</pre>
-          </article>
-        </section>
-
-        <!-- TAB 4: 안내 (외부 프로그램에서 VM에 JSON 메시지 보내는 방법) -->
-        <section id="tab-guide" class="tab-panel">
+        <!-- ==================== PC · TAB 4: 안내 ==================== -->
+        <section id="tab-pc-guide" class="tab-panel">
           <div class="steps-grid">
             <article class="card full-width">
               <div class="card-header">
-                <span class="step-num">API 안내</span>
-                <h2>외부 프로그램에서 Virtual Mouse 제어하기</h2>
+                <span class="step-num">PC API 안내</span>
+                <h2>외부 프로그램에서 PC Virtual Mouse 제어하기</h2>
               </div>
               <p class="desc">
                 Python, C#, Node.js, PowerShell, AutoHotkey 등 PC에서 실행하는 프로그램은
@@ -375,7 +443,7 @@ await fetch("http://127.0.0.1:18080/action", {
                 <li>서버 로그에는 타이핑한 글자를 남기지 않습니다.</li>
               </ul>
 
-              <h3>3. 지원 JSON 메시지 명세</h3>
+              <h3>3. 지원 JSON 메시지 명세 (PC)</h3>
               <div class="table-wrap">
                 <table class="api-table">
                   <thead>
@@ -404,10 +472,269 @@ await fetch("http://127.0.0.1:18080/action", {
             </article>
           </div>
         </section>
+
+        <!-- ==================== BT · TAB 1: 설치 (ESP32 BLE 페어링 가이드) ==================== -->
+        <section id="tab-bt-install" class="tab-panel">
+          <div class="steps-grid">
+            <!-- BT Step 1 -->
+            <article id="btStep1Card" class="card">
+              <div class="card-header">
+                <span class="step-num">BT 1단계</span>
+                <h2>ESP32 USB 연결 &amp; 드라이버 확인</h2>
+                <span id="btStep1Status" class="status-tag">대기</span>
+              </div>
+              <p id="btStep1Desc" class="desc">
+                ESP32 보드(CP210x / CH340)를 <strong>데이터 전송용 USB 케이블</strong>로 PC에 연결하세요.
+                충전 전용 케이블을 쓰면 장치가 인식되지 않습니다.
+              </p>
+              <div class="device-pills">
+                <span id="pillBtBridge" class="mini-pill">USB 브리지: -</span>
+                <span id="pillBtPort" class="mini-pill">포트: -</span>
+                <span id="pillBtFw" class="mini-pill">펌웨어: -</span>
+              </div>
+              <div id="btDriverHint" class="hint-box hidden">
+                <strong>USB-UART 드라이버 설치 필요</strong>
+                <p class="hint-text">
+                  ESP32 보드의 USB 브리지 드라이버가 정상 동작하지 않습니다. CP210x 보드라면
+                  <a href="https://www.silabs.com/developer-tools/usb-to-uart-bridge-vcp-drivers" target="_blank" rel="noopener">Silicon Labs CP210x VCP 드라이버</a>를 설치한 뒤 케이블을 다시 꽂아 주세요.
+                </p>
+              </div>
+            </article>
+
+            <!-- BT Step 2 -->
+            <article id="btStep2Card" class="card">
+              <div class="card-header">
+                <span class="step-num">BT 2단계</span>
+                <h2>ESP32 BLE HID 펌웨어 확인</h2>
+                <span id="btStep2Status" class="status-tag">대기</span>
+              </div>
+              <p id="btStep2Desc" class="desc">
+                ESP32에 <code>VirtualMouse BLE</code> 펌웨어(<code>firmware/esp32_ble_mouse/esp32_ble_mouse.ino</code>)가 올라가 있으면
+                에이전트가 리셋 없이 자동으로 감지합니다.
+              </p>
+              <div id="btFwHint" class="hint-box hidden">
+                <strong>ESP32 펌웨어 업로드 안내</strong>
+                <ol class="hint-steps">
+                  <li>Arduino IDE 또는 <code>arduino-cli</code>에 <code>esp32:esp32</code> 4.x 보드 패키지를 설치합니다.</li>
+                  <li>저장소의 <code>firmware/esp32_ble_mouse/esp32_ble_mouse.ino</code>를 ESP32 보드에 업로드합니다.</li>
+                  <li>업로드가 끝나면 이 화면이 자동으로 <strong>페어링 단계</strong>로 넘어갑니다.</li>
+                </ol>
+              </div>
+            </article>
+
+            <!-- BT Step 3 -->
+            <article id="btStep3Card" class="card full-width">
+              <div class="card-header">
+                <span class="step-num">BT 3단계</span>
+                <h2>스마트폰 블루투스 페어링 (<code>VirtualMouse BLE</code>)</h2>
+                <span id="btStep3Status" class="status-tag">대기</span>
+              </div>
+              <p id="btStep3Desc" class="desc">
+                스마트폰의 블루투스 설정에서 <strong>VirtualMouse BLE</strong> 기기를 찾아 페어링하세요.
+                연결이 완료되면 실시간으로 상태가 <strong>연결됨</strong>으로 바뀝니다.
+              </p>
+              <div class="device-pills">
+                <span id="pillBleState" class="mini-pill">BLE 상태: -</span>
+                <span id="pillBleName" class="mini-pill">기기 이름: VirtualMouse BLE</span>
+              </div>
+              <div class="os-guide-grid">
+                <div class="os-guide-box">
+                  <h3>Android 페어링</h3>
+                  <ol class="hint-steps">
+                    <li><strong>설정 → 연결 → 블루투스</strong>를 켭니다.</li>
+                    <li>연결 가능한 기기에서 <strong>VirtualMouse BLE</strong>를 탭합니다.</li>
+                    <li>페어링 요청 팝업에서 <strong>등록 / 허용</strong>을 누릅니다.</li>
+                    <li>연결되면 화면에 마우스 커서가 표시됩니다.</li>
+                  </ol>
+                </div>
+                <div class="os-guide-box">
+                  <h3>iPhone (iOS) 페어링</h3>
+                  <ol class="hint-steps">
+                    <li><strong>설정 → 손쉬운 사용 → 터치 → AssistiveTouch</strong>를 먼저 켭니다.</li>
+                    <li><strong>설정 → 블루투스</strong>에서 <strong>VirtualMouse BLE</strong>를 선택해 연결합니다.</li>
+                    <li>AssistiveTouch 포인터 설정에서 민감도와 자동 가림을 조절할 수 있습니다.</li>
+                  </ol>
+                </div>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <!-- ==================== BT · TAB 2: 테스트 ==================== -->
+        <section id="tab-bt-test" class="tab-panel">
+          <div class="steps-grid">
+            <article id="btTestCard" class="card full-width">
+              <div class="card-header">
+                <span class="step-num">BT 마우스</span>
+                <h2>스마트폰 블루투스 마우스 라이브 테스트</h2>
+                <span id="btTestStatus" class="status-tag">준비 대기</span>
+              </div>
+              <p class="desc">
+                스마트폰과 <strong>VirtualMouse BLE</strong>가 페어링된 상태에서 아래 버튼이나 트랙패드를 조작하면
+                휴대폰 화면의 커서가 실시간으로 움직입니다.
+              </p>
+
+              <div class="actions-row">
+                <button id="btnBtDemo" class="btn primary" type="button" disabled>사각형 이동 데모 실행</button>
+                <button id="btnBtClickL" class="btn secondary" type="button" disabled>좌클릭 (탭)</button>
+                <button id="btnBtClickR" class="btn secondary" type="button" disabled>우클릭 (뒤로)</button>
+                <button id="btnBtScrollUp" class="btn secondary" type="button" disabled>위로 스크롤</button>
+                <button id="btnBtScrollDown" class="btn secondary" type="button" disabled>아래로 스크롤</button>
+                <label class="step-select-label">
+                  <span>이동 폭</span>
+                  <select id="btStepSize" class="select-input">
+                    <option value="25">25 px</option>
+                    <option value="70" selected>70 px</option>
+                    <option value="160">160 px</option>
+                  </select>
+                </label>
+              </div>
+
+              <div class="bt-control-grid">
+                <div class="dpad-box">
+                  <div class="dpad-title">방향 이동 패드</div>
+                  <div class="dpad-grid">
+                    <span></span>
+                    <button id="btnBtUp" class="btn secondary dpad-btn" type="button" disabled aria-label="위로 이동">▲</button>
+                    <span></span>
+                    <button id="btnBtLeft" class="btn secondary dpad-btn" type="button" disabled aria-label="왼쪽으로 이동">◀</button>
+                    <button id="btnBtCenterClick" class="btn primary dpad-btn" type="button" disabled aria-label="클릭">탭</button>
+                    <button id="btnBtRight" class="btn secondary dpad-btn" type="button" disabled aria-label="오른쪽으로 이동">▶</button>
+                    <span></span>
+                    <button id="btnBtDown" class="btn secondary dpad-btn" type="button" disabled aria-label="아래로 이동">▼</button>
+                    <span></span>
+                  </div>
+                </div>
+
+                <div id="btTrackpad" class="trackpad" tabindex="0" aria-label="블루투스 마우스 트랙패드">
+                  <div class="trackpad-hint">이 영역을 드래그하면 휴대폰 커서가 이동합니다 (짧게 클릭 = 탭)</div>
+                </div>
+              </div>
+
+              <pre id="btLogBox" class="log-box">BT 테스트 로그 대기 중...</pre>
+            </article>
+          </div>
+        </section>
+
+        <!-- ==================== BT · TAB 4: 안내 ==================== -->
+        <section id="tab-bt-guide" class="tab-panel">
+          <div class="steps-grid">
+            <article class="card full-width">
+              <div class="card-header">
+                <span class="step-num">BT API 안내</span>
+                <h2>외부 프로그램에서 모바일 BT Virtual Mouse 제어하기</h2>
+              </div>
+              <p class="desc">
+                ESP32 BLE 장치가 연결된 상태에서도 PC 모드와 동일한 로컬 엔드포인트
+                <code>POST http://127.0.0.1:18080/action</code>과 <code>Authorization: Bearer &lt;토큰&gt;</code>을 사용합니다.
+                모바일 화면은 PC OS가 커서 좌표를 직접 읽을 수 없으므로 <strong>상대 이동(<code>move</code>) · 클릭(<code>click</code>) · 스크롤(<code>scroll</code>)</strong> 명령을 사용합니다.
+              </p>
+
+              <h3>1. 모바일 BT 호출 예시</h3>
+              <div class="code-grid">
+                <div class="code-block">
+                  <div class="code-head">
+                    <span>PowerShell</span>
+                    <button class="btn-mini copy-code" data-target="codeBtPs" type="button">복사</button>
+                  </div>
+                  <pre id="codeBtPs">$token = Get-Content "$env:LOCALAPPDATA\VirtualMouse\api-token"
+Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:18080/action" `
+  -Headers @{ Authorization = "Bearer $token" } `
+  -ContentType "application/json" `
+  -Body '{"action": "bt_demo"}'</pre>
+                </div>
+
+                <div class="code-block">
+                  <div class="code-head">
+                    <span>Python</span>
+                    <button class="btn-mini copy-code" data-target="codeBtPy" type="button">복사</button>
+                  </div>
+                  <pre id="codeBtPy">import os, requests
+
+token_file = os.path.join(os.environ["LOCALAPPDATA"], "VirtualMouse", "api-token")
+token = open(token_file, encoding="utf-8").read().strip()
+
+requests.post("http://127.0.0.1:18080/action",
+    headers={"Authorization": f"Bearer {token}"},
+    json={
+        "actions": [
+            {"action": "move", "dx": 120, "dy": 40},
+            {"action": "sleep", "ms": 120},
+            {"action": "click", "button": "L"},
+            {"action": "scroll", "delta": -4}
+        ]
+    })</pre>
+                </div>
+              </div>
+
+              <h3>2. 지원 JSON 메시지 명세 (BT · ESP32 v1.0.0)</h3>
+              <div class="table-wrap">
+                <table class="api-table">
+                  <thead>
+                    <tr>
+                      <th>동작</th>
+                      <th>전달 JSON (<code>POST /action</code>)</th>
+                      <th>설명</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr><td>상대 이동</td><td><code>{"action": "move", "dx": 120, "dy": -60}</code></td><td>곡선 + 가감속 상대 이동 (모바일 화면)</td></tr>
+                    <tr><td>클릭 / 탭</td><td><code>{"action": "click", "button": "L"}</code></td><td>좌클릭(<code>L</code>: 탭) / 우클릭(<code>R</code>: Android 뒤로가기)</td></tr>
+                    <tr><td>누르기 / 떼기</td><td><code>{"action": "press", "button": "L"}</code> / <code>release</code></td><td>롱프레스·드래그 조합</td></tr>
+                    <tr><td>휠 스크롤</td><td><code>{"action": "scroll", "delta": -3}</code></td><td>모바일 페이지 스크롤</td></tr>
+                    <tr><td>사각형 데모</td><td><code>{"action": "bt_demo"}</code></td><td>페어링 정상 여부 확인용 사각형 커서 이동</td></tr>
+                    <tr><td>비상 정지</td><td><code>{"action": "release_all"}</code></td><td>진행·대기 중인 동작 중단 및 눌린 버튼 해제</td></tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <h3>3. ESP32 개발 참고 사항</h3>
+              <ul class="rule-list">
+                <li>에이전트는 ESP32 시리얼 포트를 열 때 DTR/RTS를 <code>False</code>로 유지하여 BLE 페어링이 끊기지 않도록 보호합니다.</li>
+                <li>PC(Arduino Uno)와 BT(ESP32)는 한 번에 하나의 장치를 자동 감지해 운용합니다.</li>
+              </ul>
+            </article>
+          </div>
+        </section>
+
+        <!-- ==================== 공용 TAB 3: 로그 · 구동 (PC 로그 / BT 로그) ==================== -->
+        <section id="tab-logs" class="tab-panel">
+          <article class="card full-width">
+            <div class="card-header">
+              <span id="logsModeChip" class="step-num">구동 제어</span>
+              <h2>로컬 서버 상태 제어 · 자동 실행 및 실시간 로그</h2>
+              <span id="runtimeStatusTag" class="status-tag">확인 중</span>
+            </div>
+            <p class="desc">
+              CMD 콘솔 창 없이 이 화면에서 로컬 서버의 <strong>실행 · 일시 중지 · Windows 시작 시 자동 실행 · 완전 종료</strong>와
+              실시간 서버 로그를 직접 관리할 수 있습니다.
+            </p>
+
+            <div id="logsContextPills" class="device-pills">
+              <span id="logPillMode" class="mini-pill">모드: -</span>
+              <span id="logPillDevice" class="mini-pill">장치: -</span>
+              <span id="logPillAuto" class="mini-pill">시작 자동 실행: -</span>
+            </div>
+
+            <div class="actions-row">
+              <button id="btnLaunchAgentLogs" class="btn primary hidden" type="button">로컬 서버 실행</button>
+              <button id="btnToggleRun" class="btn primary" type="button" disabled>서비스 중지</button>
+              <button id="btnToggleAutostart" class="btn secondary" type="button" disabled>Windows 시작 자동 실행: 꺼짐</button>
+              <button id="btnQuitAgent" class="btn danger" type="button" disabled>에이전트 종료</button>
+              <button id="btnRefreshLogs" class="btn secondary" type="button">로그 새로고침</button>
+              <button id="btnClearServerLogs" class="btn secondary" type="button">로그 비우기</button>
+              <button id="btnCopyServerLogs" class="btn secondary" type="button">서버 로그 복사</button>
+              <button id="btnForgetToken" class="btn secondary" type="button">저장된 토큰 지우기</button>
+            </div>
+            <p id="runtimeMsg" class="inline-msg" aria-live="polite"></p>
+
+            <pre id="serverLogBox" class="log-box tall">서버 로그를 불러오는 중...</pre>
+          </article>
+        </section>
       </main>
     </div>
   </div>
 
-  <script src="app.js?v=20261124v12"></script>
+  <script src="app.js?v=20261127v2"></script>
 </body>
 </html>

@@ -45,8 +45,10 @@ class FakeVirtualMouse:
     ping_script: list = []
     instances: list = []
 
-    def __init__(self, port: str | None = None, *args: Any, **kwargs: Any):
+    def __init__(self, port: str | None = None, *args: Any, device_type: str = "uno", **kwargs: Any):
         self.port = port or "FAKE0"
+        self.device_type = device_type
+        self.ble_state = "CONNECTED" if device_type == "esp32" else None
         self.commands: list[str] = []
         self.closed = False
         FakeVirtualMouse.instances.append(self)
@@ -64,7 +66,14 @@ class FakeVirtualMouse:
         return not self.closed
 
     def version(self) -> str:
-        return "1.1.0"
+        return "1.0.0" if self.device_type == "esp32" else "1.1.0"
+
+    def ble_status(self) -> str | None:
+        return self.ble_state if self.device_type == "esp32" else None
+
+    def demo(self) -> bool:
+        self._record("DEMO")
+        return True
 
     def close(self) -> None:
         self.closed = True
@@ -124,6 +133,8 @@ def make_fake_dispatcher(testcase) -> "dispatcher_mod.ActionDispatcher":
         mock.patch.object(dispatcher_mod, "VirtualMouse", FakeVirtualMouse),
         mock.patch.object(dispatcher_mod, "enable_dpi_awareness", lambda: None),
         mock.patch.object(dispatcher_mod, "get_cursor_pos_safe", _fake_cursor),
+        mock.patch.object(dispatcher_mod, "win_get_autostart", lambda: False),
+        mock.patch.object(dispatcher_mod, "win_is_protocol_registered", lambda: True),
         # 실제 화면 커서를 절대 읽지 않게 human_motion 쪽도 바꾼다
         mock.patch.object(human_motion, "get_cursor_pos", _fake_cursor),
     ]
@@ -171,6 +182,10 @@ class FakeDispatcher:
     def resume(self) -> dict:
         self.calls.append("resume")
         return {"ok": True, "paused": False}
+
+    def set_autostart(self, enabled: bool) -> dict:
+        self.calls.append(("autostart", enabled))
+        return {"ok": True, "autostart_enabled": enabled}
 
 
 class FakeElevatedProcess:

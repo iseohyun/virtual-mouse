@@ -159,6 +159,32 @@ class HttpApiSecurityTest(unittest.TestCase):
         self.assertEqual(status, 404)
         self.assertEqual(self.dispatcher.calls, [])
 
+    # --- Windows 시작 자동 실행 토글: 동일한 출처·토큰·타입 검사 뒤에 있다 ---
+    def test_autostart_requires_token_and_valid_origin(self):
+        status, _, _ = self.server.request("POST", "/control/autostart", '{"enabled": true}', JSON)
+        self.assertEqual(status, 401)
+        status, _, _ = self.server.request(
+            "POST", "/control/autostart", '{"enabled": true}', {**JSON, **AUTH, "Origin": "https://evil.example"}
+        )
+        self.assertEqual(status, 403)
+        status, _, _ = self.server.request(
+            "POST", "/control/autostart", '{"enabled": true}', {**AUTH, "Content-Type": "text/plain"}
+        )
+        self.assertEqual(status, 415)
+        self.assertEqual(self.dispatcher.calls, [])
+
+    def test_autostart_validates_boolean_and_updates(self):
+        status, _, _ = self.server.request(
+            "POST", "/control/autostart", '{"enabled": "yes"}', {**JSON, **AUTH, "Origin": PUBLIC_DASHBOARD_ORIGIN}
+        )
+        self.assertEqual(status, 400)
+        status, _, data = self.server.request(
+            "POST", "/control/autostart", '{"enabled": true}', {**JSON, **AUTH, "Origin": PUBLIC_DASHBOARD_ORIGIN}
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(json.loads(data)["autostart_enabled"])
+        self.assertEqual(self.dispatcher.calls, [("autostart", True)])
+
 
 class EarlyErrorResponseTest(unittest.TestCase):
     """본문을 읽기 전에 거부할 때도 클라이언트가 오류 응답을 읽을 수 있어야 한다.
